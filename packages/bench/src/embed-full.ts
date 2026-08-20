@@ -38,7 +38,32 @@ const WORK_DIR = process.env.BENCH_WORK_DIR ?? join(__dirname, "..", "data", "fu
 const QUEUE_PATH = join(WORK_DIR, "embed-queue.jsonl")
 const INDEX_PATH = process.env.VECTOR_INDEX_FULL_PATH ?? join(__dirname, "..", "data", "vector-index.full.json")
 
-const CONCURRENCY = Number(process.env.EMBED_CONCURRENCY ?? 12)
+/**
+ * Requests in flight at once. This job is entirely Bedrock-bound — the process
+ * sits at under half of one core and 0.2 GB — so nothing about the machine it
+ * runs on sets throughput. A bigger box does not make this faster.
+ *
+ * 64 is where the account's embedding throughput saturates, and it's worth
+ * recording how that was established, because the obvious explanation was
+ * wrong. At 64 in flight the job holds 80-95/s, i.e. ~700ms per slot, which is
+ * far longer than a single call really takes. That looked like the lockstep
+ * batch barrier the pool below replaced — every slot idling until the slowest
+ * call in its batch returned. It wasn't: measured across ~400k calls, lockstep
+ * batches and the continuously-refilled pool run at the same rate, and the
+ * remaining ~700ms is Bedrock queueing the request account-side. AWS spends the
+ * quota on latency before it spends it on errors, so saturation shows up as
+ * slower calls first and ThrottlingException only at the edge.
+ *
+ * The practical consequence: raising this number buys nothing and eventually
+ * costs. Throttles begin appearing at this rate, and past the quota extra
+ * concurrency converts throughput into retries. If throughput actually matters,
+ * the lever is a quota increase or a second region, not a larger pool.
+ *
+ * Throttles that do land are routine rather than fatal: embedWithRetry backs
+ * off exponentially, and anything that still fails is simply absent from the
+ * sidecar and picked up by re-running (loadResumeState skips what's present).
+ */
+const CONCURRENCY = Number(process.env.EMBED_CONCURRENCY ?? 64)
 const FLUSH_EVERY = 2_000
 const MAX_ATTEMPTS = 6
 
@@ -160,24 +185,37 @@ async function main() {
   const startedAt = Date.now()
   let processed = 0
   let sinceFlush = 0
-  let pending: QueueItem[] = []
   let seen = 0
+  const inFlight = new Set<Promise<void>>()
 
-  const runBatch = async (batch: QueueItem[]) => {
-    const results = await Promise.all(
-      batch.map(async (item) => {
-        try {
-          return { item, vector: await embedWithRetry(item.text, config) }
-        } catch (err) {
-          failed++
-          if (failed <= 20) console.warn(`  embed failed id=${item.id} (${item.label}): ${(err as Error).message}`)
-          return undefined
-        }
-      })
-    )
-    flush(results.filter((r): r is { item: QueueItem; vector: number[] } => r !== undefined))
-    processed += batch.length
-    sinceFlush += batch.length
+  /**
+   * One item, start to written, called from a continuously refilled pool: a
+   * finished slot starts its next request immediately instead of waiting for a
+   * batch to drain.
+   *
+   * Don't expect a speedup from this. It replaced fixed CONCURRENCY-sized
+   * batches on the theory that every slot idling until the slowest call in its
+   * batch returned was the reason per-slot latency looked so high — and
+   * measurement said no, both run at the same rate, because the wait is
+   * account-side queueing at Bedrock (see CONCURRENCY). It's kept because it's
+   * the more honest structure for a latency-bound queue and because it makes
+   * throughput a function of one variable rather than two, not because it's
+   * faster.
+   *
+   * Each row writes its own vector-then-meta pair, so completion order doesn't
+   * matter to alignment — the two files stay in step by construction, which is
+   * what makes an out-of-order pool safe here at all.
+   */
+  const runOne = async (item: QueueItem) => {
+    try {
+      const vector = await embedWithRetry(item.text, config)
+      flush([{ item, vector }])
+    } catch (err) {
+      failed++
+      if (failed <= 20) console.warn(`  embed failed id=${item.id} (${item.label}): ${(err as Error).message}`)
+    }
+    processed++
+    sinceFlush++
     if (sinceFlush >= FLUSH_EVERY) {
       writeDescriptor()
       sinceFlush = 0
@@ -205,13 +243,13 @@ async function main() {
     resume.ids.add(item.id)
     if (!item.text?.trim()) continue
 
-    pending.push(item)
-    if (pending.length >= CONCURRENCY) {
-      await runBatch(pending)
-      pending = []
-    }
+    // Start it immediately and only block once the pool is full, so reading the
+    // queue never waits on a request that has nothing to do with it.
+    const task = runOne(item).finally(() => inFlight.delete(task))
+    inFlight.add(task)
+    if (inFlight.size >= CONCURRENCY) await Promise.race(inFlight)
   }
-  if (pending.length > 0) await runBatch(pending)
+  await Promise.all(inFlight)
 
   writeDescriptor()
   closeSync(metaFd)
