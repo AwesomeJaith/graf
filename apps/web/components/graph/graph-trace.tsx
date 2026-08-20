@@ -74,6 +74,7 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
   }, [measure])
 
   const dimmed = (id: string) => !!highlightedNodeIds && !highlightedNodeIds.includes(id)
+  const justDraggedRef = React.useRef(false)
 
   return (
     <div className="rounded-lg border border-border/70 bg-card/40">
@@ -117,15 +118,29 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
                       if (el) nodeRefs.current.set(node.id, el)
                       else nodeRefs.current.delete(node.id)
                     }}
+                    drag
+                    dragMomentum={false}
+                    dragElastic={0}
+                    dragConstraints={containerRef}
+                    onDragStart={() => {
+                      justDraggedRef.current = true
+                    }}
+                    onDrag={measure}
+                    onDragEnd={measure}
+                    whileDrag={{ zIndex: 10, cursor: "grabbing" }}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: isDim ? 0.35 : 1, y: 0, scale: 1 }}
                     transition={{ duration: 0.35, delay: ci * 0.1 }}
                     onClick={() => {
+                      if (justDraggedRef.current) {
+                        justDraggedRef.current = false
+                        return
+                      }
                       setInspected(node)
                       onNodeClick?.(node)
                     }}
                     className={cn(
-                      "w-44 cursor-pointer rounded-md border bg-card px-3 py-2 transition-shadow",
+                      "w-44 cursor-grab rounded-md border bg-card px-3 py-2 transition-shadow active:cursor-grabbing",
                       "hover:border-primary/40",
                       node.role === "resolved" ? "border-primary/50" : "border-border",
                       node.role === "conflict" && "border-dashed border-primary/60",

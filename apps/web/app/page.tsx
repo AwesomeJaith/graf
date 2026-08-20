@@ -11,7 +11,7 @@ import { UserTurn, AssistantTurn } from "@/components/chat/message-turn"
 import { SettingsMenu } from "@/components/chat/settings-menu"
 
 export default function Page() {
-  const { conversations, active, activeId, newChat, selectConversation, updateMessages } = useConversations()
+  const { conversations, active, activeId, newChat, selectConversation, deleteConversation, updateMessages } = useConversations()
   const [mode, setMode] = React.useState<ResponseMode>("normal")
   const [showReasoningByDefault, setShowReasoningByDefault] = useReasoningSetting()
   const scrollRef = React.useRef<HTMLDivElement>(null)
@@ -81,7 +81,13 @@ export default function Page() {
 
   return (
     <div className="flex h-svh bg-background">
-      <ConversationSidebar conversations={conversations} activeId={activeId} onSelect={selectConversation} onNewChat={newChat} />
+      <ConversationSidebar
+        conversations={conversations}
+        activeId={activeId}
+        onSelect={selectConversation}
+        onNewChat={newChat}
+        onDelete={deleteConversation}
+      />
 
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between px-5 py-3.5">

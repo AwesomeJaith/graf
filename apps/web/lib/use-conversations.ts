@@ -60,6 +60,16 @@ export function useConversations() {
 
   const selectConversation = React.useCallback((id: string) => setActiveId(id), [])
 
+  const deleteConversation = React.useCallback(
+    (id: string) => {
+      const remaining = conversations.filter((c) => c.id !== id)
+      const next = remaining.length > 0 ? remaining : [makeConversation()]
+      setConversations(next)
+      setActiveId((current) => (current === id ? next[0]!.id : current))
+    },
+    [conversations]
+  )
+
   const updateMessages = React.useCallback((id: string, updater: (messages: ChatMessage[]) => ChatMessage[]) => {
     setConversations((prev) =>
       prev.map((c) => {
@@ -72,5 +82,5 @@ export function useConversations() {
 
   const active = conversations.find((c) => c.id === activeId) ?? null
 
-  return { conversations, active, activeId, newChat, selectConversation, updateMessages }
+  return { conversations, active, activeId, newChat, selectConversation, deleteConversation, updateMessages }
 }

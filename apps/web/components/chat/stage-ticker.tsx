@@ -30,10 +30,6 @@ export function StageTicker({ stages = DEFAULT_STAGES, activeIndex }: { stages?:
 
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="relative flex size-1.5">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
-      </span>
       <AnimatePresence mode="wait">
         <motion.div
           key={stage.key}
