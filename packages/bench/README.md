@@ -66,3 +66,61 @@ Requires `HYDRADB_BOLT_URL`/`HYDRADB_AUTH_TOKEN` (writes the graph) and `AWS_REG
 `data/vector-index.sample.json`, ~9MB, gitignored — regenerate rather than commit). Safe to
 re-run: node/relationship ids are deterministic given the same input files, so writes are
 idempotent `MERGE`s.
+
+## Evaluation
+
+`src/run-eval.ts` scores any system against the 55 sample questions, in the exact answers.jsonl
+format EnterpriseRAG-Bench's own `quickstart.md` defines:
+
+```jsonl
+{"question_id": "qst_0001", "answer": "...", "document_ids": ["dsid_..."]}
+```
+
+```bash
+pnpm run bench:eval <answers.jsonl> <label>
+# writes data/results/<label>.json + prints an overall + per-category table
+```
+
+Metrics (simplified single-LLM-judge version of the real benchmark's 3-judge-consensus flow —
+see `src/judge.ts` for what's simplified and why): **Correctness** (holistic LLM judgment vs
+gold answer), **Completeness** (fraction of `answer_facts` supported), **Document Recall**
+(fraction of gold `expected_doc_ids` present in the candidate's `document_ids`), **Invalid Extra
+Documents** (candidate docs outside the gold set — the real benchmark runs a 3-judge relevance
+classification here instead of a strict set difference).
+
+### Baseline: vector RAG (no graph)
+
+`src/baseline-vector-rag.ts` is the "baseline vector/standard RAG" comparison point from the
+product brief — embed every document, embed the question, cosine-rank, stuff the top-5 into one
+LLM call. No graph, no entity resolution, no traversal, no conflict handling.
+
+```bash
+pnpm run bench:baseline   # writes data/baseline-answers.sample.jsonl
+pnpm run bench:eval packages/bench/data/baseline-answers.sample.jsonl baseline-vector-rag
+```
+
+Result (`data/results/baseline-vector-rag.json`), 55/55 questions answered:
+
+| Category | Correctness | Completeness | Doc Recall |
+|---|---|---|---|
+| **Overall** | **25%** | **37%** | **83%** |
+| basic | 50% | 59% | 100% |
+| semantic | 17% | 17% | 83% |
+| intra_document_reasoning | 20% | 27% | 80% |
+| project_related | 0% | 2% | 78% |
+| constrained | 40% | 67% | 90% |
+| conflicting_info | 0% | 45% | 83% |
+| completeness | 0% | 18% | 80% |
+| miscellaneous | 20% | 20% | 60% |
+| high_level | 0% | 10% | n/a (no gold docs) |
+| info_not_found | 100% | 100% | n/a (no gold docs) |
+
+This is the number graph retrieval needs to beat, category by category — note flat vector RAG
+gets reasonable document recall almost everywhere (it's finding roughly the right documents) but
+correctness collapses exactly on the categories that require reasoning across documents rather
+than reading one: `project_related` (0%, needs multi-doc aggregation), `conflicting_info` (0%,
+retrieves both conflicting docs but has no mechanism to reconcile them), `completeness` (0%,
+partial retrieval instead of exhaustive), `high_level` (0%, no single/few documents contain the
+answer). That gap is exactly what graph traversal + conflict resolution + entity resolution is
+for — run the same `bench:eval` command against `@workspace/retrieval`'s output on these same 55
+questions for the comparison.

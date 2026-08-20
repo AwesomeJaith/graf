@@ -13,7 +13,11 @@ export interface CorrectnessVerdict {
   reasoning: string
 }
 
-export async function judgeCorrectness(question: string, goldAnswer: string, candidateAnswer: string): Promise<CorrectnessVerdict> {
+export async function judgeCorrectness(
+  question: string,
+  goldAnswer: string,
+  candidateAnswer: string
+): Promise<CorrectnessVerdict> {
   const system =
     "You are grading a candidate answer against a gold answer for a question-answering benchmark. " +
     "Be lenient toward stylistic differences, additional context, and extra detail, but the candidate must address " +
@@ -30,7 +34,10 @@ export interface FactVerdict {
   supported: boolean
 }
 
-export async function judgeFactSupported(candidateAnswer: string, fact: string): Promise<FactVerdict> {
+export async function judgeFactSupported(
+  candidateAnswer: string,
+  fact: string
+): Promise<FactVerdict> {
   const system =
     "You check whether a candidate answer contains or implies a specific fact. " +
     'Respond with ONLY a JSON object: {"supported": boolean}'
@@ -40,13 +47,21 @@ export async function judgeFactSupported(candidateAnswer: string, fact: string):
   return { fact, supported }
 }
 
-export async function judgeCompleteness(candidateAnswer: string, answerFacts: string[]): Promise<number> {
+export async function judgeCompleteness(
+  candidateAnswer: string,
+  answerFacts: string[]
+): Promise<number> {
   if (answerFacts.length === 0) return 1
-  const verdicts = await Promise.all(answerFacts.map((f) => judgeFactSupported(candidateAnswer, f)))
+  const verdicts = await Promise.all(
+    answerFacts.map((f) => judgeFactSupported(candidateAnswer, f))
+  )
   return verdicts.filter((v) => v.supported).length / verdicts.length
 }
 
-export function documentRecall(expectedDocIds: string[], candidateDocIds: string[]): number | undefined {
+export function documentRecall(
+  expectedDocIds: string[],
+  candidateDocIds: string[]
+): number | undefined {
   if (expectedDocIds.length === 0) return undefined
   const candidateSet = new Set(candidateDocIds)
   const hits = expectedDocIds.filter((id) => candidateSet.has(id)).length
@@ -54,7 +69,10 @@ export function documentRecall(expectedDocIds: string[], candidateDocIds: string
 }
 
 /** Simplified: any candidate doc outside the gold set counts as "invalid extra" — the real benchmark runs a 3-judge relevance classification instead of a strict set difference. */
-export function invalidExtraDocuments(expectedDocIds: string[], candidateDocIds: string[]): number | undefined {
+export function invalidExtraDocuments(
+  expectedDocIds: string[],
+  candidateDocIds: string[]
+): number | undefined {
   if (expectedDocIds.length === 0) return undefined
   const expectedSet = new Set(expectedDocIds)
   return candidateDocIds.filter((id) => !expectedSet.has(id)).length

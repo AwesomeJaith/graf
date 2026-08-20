@@ -36,69 +36,93 @@ Confirmed facts (don't re-derive):
 - [x] Research EnterpriseRAG-Bench data format — fork
 - [x] Stand up local HydraDB dev node in Docker, verify round trip
 - [x] Read HydraDB cypher-compat subset doc
-- [ ] Write this TODO.md
-- [ ] `.env.example` + wire `.env` for local dev (HydraDB + AWS Bedrock)
+- [x] Write this TODO.md
+- [x] `.env.example` + wire `.env` for local dev (HydraDB + AWS Bedrock)
 
-### 1. Graph layer (`packages/graph-client`)
-- [ ] `neo4j-driver` wrapper: connect, run cypher, run batched UNWIND writes,
-      run `algo.*` path procedures, map driver Integer/Node/Relationship types
-      to plain JS objects
-- [ ] Schema introspection: query distinct labels/rel-types/properties actually
-      present so the rest of the app never hardcodes entity type names
-- [ ] Seed script: small hand-authored demo graph (Sam/Atlas style scenario
-      from prompt.md's example) so the demo works even before/alongside bench
-      ingestion — this is the deadline-safety net
+### 1. Graph layer (`packages/graph-client`) — done
+- [x] `neo4j-driver` (Bolt) wrapper for writes/scripts + a second HTTP/JSON
+      transport (`runQueryHttp`) for reads from the Next.js server — Bolt's
+      binary framing gets corrupted running inside Turbopack's dev process,
+      HTTP transport doesn't have that problem
+- [x] Node/Relationship/Path unwrapping to plain JS objects (both transports)
+- [x] Seed script (`pnpm run seed:demo`) — Sam/Atlas scenario w/ deliberate
+      name ambiguity, conflicting launch-date docs (CONTRADICTS+SUPERSEDES),
+      temporal OWNS edges
+- [~] Schema introspection: HydraDB has no catalog (`MATCH (n)` bare scan is
+      rejected), so `packages/graph-schema`'s declared schema is the source of
+      truth instead of runtime introspection — same effect (nothing hardcoded
+      per-label in the pipeline), different mechanism than originally planned
 
-### 2. Bench ingestion (`packages/bench`)
-- [ ] Once research lands: map a representative sample of EnterpriseRAG-Bench
-      records (Slack/Gmail/Drive/Linear/GitHub/Jira/Confluence/HubSpot/Fireflies)
-      to Person/Project/Document/Message/Channel/Task/Issue/Decision/Event nodes
-      + WORKS_ON/AUTHORED/MENTIONED_IN/REFERENCES/DISCUSSED_IN/etc edges
-- [ ] Batch-load via UNWIND into local HydraDB
-- [ ] Keep it schema-adaptive: ingestion emits whatever labels the source data
-      implies, doesn't require code changes per schema
+### 2. Bench ingestion (`packages/bench`) — done
+- [x] Real EnterpriseRAG-Bench data (not synthetic): curated 135-doc/55-question
+      slice across all 9 source types, committed under `packages/bench/data/`
+- [x] Ingested: 449 nodes (Person 204, Org 55, Project 24, Channel 9, Message 19,
+      Document 49, Task 65, Issue 7, Decision 1) + 891 relationships, incl. 7
+      real ground-truth CONTRADICTS edges from the benchmark's conflicting_info
+      questions
+- [x] Schema-adaptive: ingestion maps to whatever `graph-schema` declares
 
-### 3. Retrieval pipeline (`packages/retrieval`)
-- [ ] LLM client wrapping Bedrock Converse API (Claude), model id from env
-- [ ] Query understanding: extract candidate entity mentions + question type
-- [ ] Entity resolution: fuzzy/LLM-ranked match against graph node names/aliases
-      → ranked candidates w/ confidence; surface ambiguity when top-2 margin is small
-- [ ] Graph query planning: pick traversal (start nodes, rel types, depth) from
-      schema + question type
-- [ ] Traversal execution against HydraDB, collect subgraph w/ provenance
-      (source, timestamp) on every node/edge touched
-- [ ] Conflict/temporal reasoning: detect same-fact/different-value evidence,
-      pick most-current, keep alternatives inspectable
-- [ ] Answer synthesis: Bedrock call over evidence, produce claim → evidence-id map
-- [ ] Response modes: concise / normal / verbose prompt variants
+### 3. Retrieval pipeline (`packages/retrieval`) — done, live end to end
+- [x] Bedrock Converse client w/ forced tool-use for structured output (`llm.ts`)
+- [x] Query understanding + entity resolution: real candidate pool from
+      HydraDB, ranked by the model using each candidate's actual one-hop graph
+      neighbors (not just name similarity) — this is what makes "Sam" resolve
+      to Sam Ratnaparkhi 95%+ instead of guessing from title text alone
+- [x] Graph query planning + traversal via `algo.SSpaths` (one query per
+      resolved entity, bounded 3 hops); conflict/supersession types always
+      included regardless of what the planner asked for
+- [x] Conflict/temporal reasoning: deterministic, graph-driven (SUPERSEDES
+      direction or newer timestamp wins), deduped per node pair
+- [x] Answer synthesis w/ claim→node-id citations, response-mode prompt variants
 
-### 4. API (`apps/web/app/api`)
-- [ ] `POST /api/chat` — SSE stream: stage events (resolving/searching/
-      traversing/evaluating/answer) + final {answer, claims, trace}
-- [ ] `POST /api/entities/resolve` — user's disambiguation pick
-- [ ] `GET /api/graph/schema` — drives dynamic UI copy
+### 4. API (`apps/web/app/api`) — done, simplified
+- [x] `POST /api/chat` — synchronous JSON (not SSE): `{question, mode,
+      overrides?}` → `{answer, claims, trace, entityResolutions, conflicts,
+      stages}`. Stage sequence in the UI is a client-side ticker, not live
+      server events — scope cut for time, revisit if there's time later.
+- [x] Entity re-resolution: `overrides` on the same endpoint (mention →
+      chosen candidate id/label) instead of a separate route
+- [ ] `GET /api/graph/schema` — cut, not needed for the demo (schema is
+      loaded server-side already; no dynamic client-side copy depends on it)
 
-### 5. Chat UI (`apps/web`)
-- [ ] Theme tokens (colors/radii/font) + Inter
-- [ ] Full-screen layout: chat center, fixed input, minimal chrome
-- [ ] Avatar fallback (gradient rounded-square, hash-based) per reference pattern
-- [ ] Markdown renderer (clean typography, code/tables), CSV table renderer,
-      Slack-style message renderer, entity/user profile card, generic file preview
-- [ ] Entity disambiguation chips (confidence %, spring expand/collapse)
-- [ ] Graph trace panel: real subgraph from the pipeline, animated stage
-      sequence, hover/click node inspect, click-claim → highlight path
-- [ ] Conflict card UI ("Conflicting information found" + selected/why)
-- [ ] Response mode selector (concise/normal/verbose)
+### 5. Chat UI (`apps/web`) — core done
+- [x] Theme tokens (`#262626`/`#373737`/`#D74C26`) + Inter
+- [x] Full-screen layout: chat center, fixed input, minimal chrome
+- [x] Avatar fallback (gradient rounded-square, hash-based)
+- [x] Markdown renderer
+- [x] Entity disambiguation chips (confidence %, click to re-resolve)
+- [x] Graph trace panel: real subgraph from the pipeline, staggered reveal,
+      click-node inspect panel, click-claim → highlight path (verified in
+      browser via Playwright)
+- [x] Conflict card UI
+- [x] Response mode selector (concise/normal/verbose)
+- [ ] CSV table renderer, Slack-style message history renderer, generic file
+      preview — cut for time, not required for the core demo path
 
-### 6. Eval (`packages/bench` eval harness)
-- [ ] Baseline vector RAG vs graph retrieval vs +entity-resolution vs
-      +provenance-trace, scored on the bench sample, broken down by category
-- [ ] Reproducible: one script, checked-in results
+### 6. Eval (`packages/bench` eval harness) — baseline done, graph comparison pending
+- [x] `bench:ingest`, `bench:baseline` (vector RAG), `bench:eval` scripts —
+      confirmed running clean end to end (fixed two real bugs along the way:
+      Bedrock JSON-judge responses need brace-depth-aware extraction, not a
+      regex — a `}` inside a `"reasoning"` string broke naive matching; and
+      empty-text embed calls need a fallback like the ingest script already had)
+- [x] Baseline vector RAG scored on all 55 sample questions: 25% correctness /
+      37% completeness / 83% doc recall overall, but 0% correctness on
+      `project_related`, `conflicting_info`, `completeness`, `high_level` —
+      exactly the categories needing multi-doc reasoning/conflict resolution/
+      exhaustive retrieval that graph traversal should win on. Numbers +
+      per-category table in `packages/bench/README.md` and
+      `packages/bench/data/results/baseline-vector-rag.json`.
+- [ ] Run `@workspace/retrieval`'s answers on the same 55 questions through
+      `bench:eval` for the graph-retrieval comparison point (needs an
+      answers.jsonl in the documented format — retrieval pipeline owner to
+      produce, or point me at the pipeline call and I'll script it)
 
 ### 7. Submission
-- [ ] README: setup, HydraDB usage explanation, how to run
-- [ ] LICENSE.md already present (MIT) — commit it
-- [ ] No commits before Aug 12 (already satisfied — repo created today)
+- [x] README: setup, HydraDB usage explanation, how to run
+- [x] LICENSE.md present (MIT), committed
+- [x] No commits before Aug 12 (repo created today — satisfied)
+- [x] Committed + pushed to github.com/AwesomeJaith/graf
+- [x] Discord milestone update sent
 - [ ] Remind user: record ≤3min demo video + submit Google form (can't do this
       part for them)
-- [ ] Periodic commits + Discord milestone updates per discord-update-prompt.md tone
+- [ ] Keep committing/pushing periodically as remaining items land
