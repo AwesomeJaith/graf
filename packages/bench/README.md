@@ -145,11 +145,23 @@ that predates this split can reclaim its memory and resume from its checkpoint i
 from scratch. Nothing is lost — the next ingest pass re-derives every body into the sidecar, because
 it re-normalizes all 128 shards regardless of which one it resumes *writing* at.
 
-Cross-document `REFERENCES` resolution is also stricter at this scale: a link token must be **6+
-characters and contain a digit**. Link fields include `labels`/`tags`/`topics`/`components` — ordinary
-words — and at half a million documents any short generic token matches thousands of documents.
-`ingest-full.ts` prints its highest-fan-out keys at the end so the rule can be checked rather than
-trusted, and `bench:verify` prints real `REFERENCES` pairs with both endpoints' text.
+Cross-document `REFERENCES` resolution is also stricter at this scale, in two ways. A link token must
+be **6+ characters and contain a digit**: link fields include `labels`/`tags`/`topics`/`components` —
+ordinary words — and at half a million documents any short generic token matches thousands of
+documents.
+
+Shape alone isn't enough, though. The first full load produced **7,376 edges from the single key
+`123456`** — a quarter of all cross-document edges came from its top 15 keys. `123456` is not an
+identifier; it's the fractional half of Slack thread timestamps like `1699887766.123456`, which the
+tokenizer splits on the dot. Because each key resolved to one target id, all 7,376 documents got an
+edge to whichever document declared the key last: arbitrary, and worse than no edge, since a traversal
+landing on that hub drags an unrelated document into the evidence set. So a key declared by more than
+`MAX_KEY_DECLARERS` (3) documents is dropped entirely, and one declared by 2–3 — an issue and the doc
+written about it, say — links to all of them rather than to an arbitrary winner.
+
+`ingest-full.ts` prints its highest-fan-out keys and how many keys were dropped, so the rule can be
+checked rather than trusted, and `bench:verify` prints real `REFERENCES` pairs with both endpoints'
+text.
 
 ### Cloud BYOG vs the local node
 

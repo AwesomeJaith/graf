@@ -201,6 +201,28 @@ function isDistinctiveKey(key: string): boolean {
   return key.length >= 6 && /\d/.test(key)
 }
 
+/**
+ * How many documents may declare the same key before it stops being treated as
+ * an identifier at all.
+ *
+ * `isDistinctiveKey` filters by *shape*, which is necessary but not sufficient:
+ * the first full-corpus load produced 7,376 REFERENCES edges from the single key
+ * `123456` — a quarter of all cross-document edges came from its top 15 keys.
+ * That key isn't an identifier, it's the fractional half of Slack thread
+ * timestamps like `1699887766.123456`, which the tokenizer splits on the dot.
+ *
+ * Because a key resolved to one target id, every one of those 7,376 documents
+ * got an edge to whichever document happened to declare the key last —
+ * arbitrary, and worse than no edge, since a traversal that lands on it pulls an
+ * unrelated document into the evidence set.
+ *
+ * A genuine identifier is declared by one document, or by the handful that are
+ * the same thing across sources (an issue and the doc written about it) — which
+ * is a link worth keeping, so up to this many declarers all get edges. Beyond
+ * it, the key is a placeholder or a coincidence and is dropped entirely.
+ */
+const MAX_KEY_DECLARERS = 3
+
 // ---------------------------------------------------------------------------
 // Write pipeline
 // ---------------------------------------------------------------------------
@@ -356,8 +378,46 @@ async function main() {
 
   // Cross-shard state. See MEMORY NOTES in the file header.
   const keyIndex = new Map<string, number>()
+  // Keys declared by more than one document, kept out of `keyIndex` so a single
+  // over-shared key can't resolve to an arbitrary one of its declarers. See
+  // `MAX_KEY_DECLARERS`.
+  const keyExtras = new Map<string, number[]>()
+  const ambiguousKeys = new Set<string>()
   const labelOfId = new Map<number, number>()
   const writtenEntities = new Set<number>()
+
+  /** Records that `docNodeId` declares `key`, demoting over-shared keys to ambiguous. */
+  const recordKey = (key: string, docNodeId: number): void => {
+    if (ambiguousKeys.has(key)) return
+    const first = keyIndex.get(key)
+    if (first === undefined) {
+      keyIndex.set(key, docNodeId)
+      return
+    }
+    if (first === docNodeId) return
+    const extras = keyExtras.get(key)
+    if (extras === undefined) {
+      keyExtras.set(key, [docNodeId])
+      return
+    }
+    if (extras.includes(docNodeId)) return
+    if (2 + extras.length > MAX_KEY_DECLARERS) {
+      // Give up on the key rather than pick a winner among its declarers.
+      ambiguousKeys.add(key)
+      keyIndex.delete(key)
+      keyExtras.delete(key)
+      return
+    }
+    extras.push(docNodeId)
+  }
+
+  /** All documents declaring `key`, empty when it was never seen or was too widely shared. */
+  const resolveKey = (key: string): number[] => {
+    const first = keyIndex.get(key)
+    if (first === undefined) return []
+    const extras = keyExtras.get(key)
+    return extras === undefined ? [first] : [first, ...extras]
+  }
 
   const orgRootId = stableId("org", ORG_NAME)
   // dsid -> label, but only for the handful of documents the conflicting_info
@@ -380,7 +440,14 @@ async function main() {
   const totalShards = Math.ceil(files.length / SHARD_SIZE)
   const startedAt = Date.now()
 
-  if (checkpoint.phase === "nodes") {
+  // The normalize loop runs on every invocation, including one whose checkpoint
+  // says the node phase is already finished. It has to: `keyIndex`/`labelOfId`
+  // must be complete before the REFERENCES pass, and the three streams opened
+  // just above are rebuilt from it. Gating the loop on the phase would leave all
+  // three truncated to zero — including the content sidecar the web app serves
+  // body text from — so re-running a finished ingest would silently empty it.
+  // Only the network writes are phase-dependent, via the `shardsDone` skip below.
+  {
     for (let shard = 0; shard < totalShards; shard++) {
       const slice = files.slice(shard * SHARD_SIZE, (shard + 1) * SHARD_SIZE)
 
@@ -455,7 +522,7 @@ async function main() {
         })
 
         for (const key of doc.knownKeys) {
-          if (isDistinctiveKey(key)) keyIndex.set(key.toLowerCase(), docNodeId)
+          if (isDistinctiveKey(key)) recordKey(key.toLowerCase(), docNodeId)
         }
 
         for (const person of doc.people) {
@@ -566,14 +633,16 @@ async function main() {
           `${elapsed.toFixed(0)}s elapsed, eta ${((totalShards - done) / rate / 60).toFixed(1)}min`
       )
     }
-    saveCheckpoint(checkpointPath, { shardsDone: totalShards, phase: "references" })
+    if (checkpoint.phase === "nodes") saveCheckpoint(checkpointPath, { shardsDone: totalShards, phase: "references" })
   }
 
   linksStream.end()
   embedStream.end()
   await contentStore.close()
   console.log(
-    `Nodes and direct relationships written. keyIndex=${keyIndex.size.toLocaleString()} distinctive keys, ` +
+    `Nodes and direct relationships written. keyIndex=${keyIndex.size.toLocaleString()} distinctive keys ` +
+      `(${keyExtras.size.toLocaleString()} shared by 2-${MAX_KEY_DECLARERS} documents, ` +
+      `${ambiguousKeys.size.toLocaleString()} dropped as too widely shared), ` +
       `${contentStore.size.toLocaleString()} body texts in the content sidecar.`
   )
 
@@ -592,19 +661,20 @@ async function main() {
     const seen = new Set<number>()
     for (const text of linkTexts) {
       for (const token of text.toLowerCase().match(/[a-z0-9_-]{6,}/g) ?? []) {
-        const targetId = keyIndex.get(token)
-        if (targetId === undefined || targetId === sourceId || seen.has(targetId)) continue
-        seen.add(targetId)
-        const labelIdx = labelOfId.get(targetId)
-        if (labelIdx === undefined || labelIdx < 0) continue
-        fanout.set(token, (fanout.get(token) ?? 0) + 1)
-        pending.push({
-          relType: "REFERENCES",
-          sourceLabel,
-          destinationLabel: CONTENT_LABELS[labelIdx]!,
-          row: { id: stableId("references", `${sourceId}|${targetId}`), rel_type: "REFERENCES", sourceId, destinationId: targetId },
-        })
-        referenceCount++
+        for (const targetId of resolveKey(token)) {
+          if (targetId === sourceId || seen.has(targetId)) continue
+          seen.add(targetId)
+          const labelIdx = labelOfId.get(targetId)
+          if (labelIdx === undefined || labelIdx < 0) continue
+          fanout.set(token, (fanout.get(token) ?? 0) + 1)
+          pending.push({
+            relType: "REFERENCES",
+            sourceLabel,
+            destinationLabel: CONTENT_LABELS[labelIdx]!,
+            row: { id: stableId("references", `${sourceId}|${targetId}`), rel_type: "REFERENCES", sourceId, destinationId: targetId },
+          })
+          referenceCount++
+        }
       }
     }
     if (pending.length >= 20_000) {
