@@ -77,29 +77,34 @@
     --radius: 0.5rem;
     /* Brand gradient, taken from the logo. The mark isn't a CSS gradient —
        it's the deterministic SVG identicon in components/avatar.tsx, whose
-       three layers for the name "Graf" resolve to exactly these palette
-       entries in this order. Hoisted into variables so the switch, the send
-       button and the shimmer share one definition with the logo instead of
-       three hand-copied colour lists that drift the moment the mark changes. */
+       layers for the name "Graf" resolve to fixed palette entries. Hoisted
+       into variables so the switch, the send button and the shimmer share one
+       definition with the logo instead of hand-copied colour lists that drift
+       the moment the mark changes.
+
+       Only two colours, though the identicon draws three. Its third layer is
+       #050d4c, but it's painted with mix-blend-mode overlay under a
+       stdDeviation-7 blur, so at the 22-28px the mark actually renders at it
+       reads as a faint darkening rather than as navy. Carrying it into a flat
+       CSS gradient made these surfaces look like something the logo doesn't. */
     --brand-1: #f6c750;
     --brand-2: #e63525;
-    --brand-3: #050d4c;
-    /* Diagonal to echo the identicon's angled blobs. brand-2 sits near the
-       middle so a centred icon lands on the red rather than on either
-       extreme, where a light glyph would wash out or a dark one vanish. */
-    --brand-gradient: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 55%, var(--brand-3) 100%);
+    /* Diagonal to echo the identicon's angled blobs, and red-weighted the way
+       the mark is: the blurred red blob covers most of the yellow ground. The
+       weighting also keeps a centred glyph off the pale end, where a light
+       icon would wash out. */
+    --brand-gradient: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 70%);
     /* Sweep variant for animated text. Palindromic on purpose: the shimmer
        animates background-position across a 200%-wide box, so the two edges
-       have to be the same colour or the loop visibly jumps on repeat. brand-3
-       is kept to a narrow mid band because at #050d4c on this background it
-       reads as a hole in the text rather than a sheen if given real width. */
+       have to be the same colour or the loop visibly jumps on repeat. Bright
+       yellow travels through the dimmer red rather than the reverse, which is
+       what makes it read as a sheen — the same dim/bright/dim shape the
+       muted-foreground/foreground/muted-foreground version had. */
     --brand-gradient-sweep: linear-gradient(
         90deg,
-        var(--brand-1) 0%,
-        var(--brand-2) 35%,
-        var(--brand-3) 50%,
-        var(--brand-2) 65%,
-        var(--brand-1) 100%
+        var(--brand-2) 0%,
+        var(--brand-1) 50%,
+        var(--brand-2) 100%
     );
     --sidebar: #262626;
     --sidebar-foreground: #ededed;
