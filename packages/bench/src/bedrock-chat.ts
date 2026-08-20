@@ -26,7 +26,10 @@ export async function chat(
       modelId,
       system: [{ text: system }],
       messages: [{ role: "user", content: [{ text: user }] }],
-      inferenceConfig: { maxTokens: 1024, temperature: 0 },
+      // 1024 truncates mid-JSON on judge responses with long reasoning
+      // (e.g. "constrained" questions with many negative facts to check),
+      // which extractJson can't recover from since the object never closes.
+      inferenceConfig: { maxTokens: 4096, temperature: 0 },
     })
   )
   return response.output?.message?.content?.[0]?.text ?? ""

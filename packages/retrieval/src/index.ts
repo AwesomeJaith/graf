@@ -2,6 +2,7 @@ import { loadGraphSchema } from "@workspace/graph-schema"
 
 import { detectConflicts } from "./conflicts"
 import { pickTimestamp } from "./conflicts"
+import { rankNodeIdsByRelevance, searchContent } from "./content-search"
 import { fetchResolvedNode, planQuery, resolveEntities, type EntityOverride } from "./resolve"
 import { synthesizeAnswer } from "./synthesize"
 import { expandGraph } from "./traverse"
@@ -12,6 +13,7 @@ export { planQuery, resolveEntities, type EntityOverride } from "./resolve"
 export { expandGraph } from "./traverse"
 export { detectConflicts } from "./conflicts"
 export { synthesizeAnswer } from "./synthesize"
+export { searchContent } from "./content-search"
 
 /**
  * Full pipeline: query understanding -> entity resolution -> graph query
@@ -27,9 +29,12 @@ export async function answerQuestion(
   const schema = loadGraphSchema()
 
   const plan = await planQuery(question, schema)
-  const entityResolutions = await resolveEntities(question, plan, schema, overrides)
+  const [entityResolutions, contentNodes] = await Promise.all([
+    resolveEntities(question, plan, schema, overrides),
+    searchContent(question, schema),
+  ])
 
-  const resolvedNodes = (
+  const entityNodes = (
     await Promise.all(
       entityResolutions.map(async (res) => {
         const candidate = res.candidates.find((c) => c.id === res.resolvedId)
@@ -38,6 +43,15 @@ export async function answerQuestion(
       })
     )
   ).filter((n): n is NonNullable<typeof n> => Boolean(n))
+
+  // Named-entity resolution finds *who*/*what project*; content search finds
+  // *which document/message actually has the answer* — most factual
+  // questions ("what's the default size limit for...") have no person or
+  // project mention to anchor on at all, so this is often the only entry
+  // point into the graph.
+  const entityNodeIds = new Set(entityNodes.map((n) => n.id))
+  const contentNodeIds = new Set(contentNodes.map((n) => n.id))
+  const resolvedNodes = [...entityNodes, ...contentNodes.filter((n) => !entityNodeIds.has(n.id))]
 
   if (resolvedNodes.length === 0) {
     return {
@@ -56,16 +70,24 @@ export async function answerQuestion(
   const { nodes, edges } = await expandGraph(resolvedNodes, schema, plan.focusRelationshipTypes)
   const detected = detectConflicts(nodes, edges)
 
-  const synth = await synthesizeAnswer(question, mode, nodes, edges, detected)
+  // Synthesis gets a relevance-filtered view of the touched content nodes
+  // (top 8) so 20-30 mostly-structural traversal hops don't dilute the
+  // model's precision on exact figures/names — the full set still drives
+  // the trace/UI and conflict detection above.
+  const contentIds = nodes.filter((n) => typeof n.properties.dsid === "string").map((n) => n.id)
+  const keepContentIds = await rankNodeIdsByRelevance(question, contentIds, 8)
+  const synthNodes = nodes.filter((n) => typeof n.properties.dsid !== "string" || keepContentIds.has(n.id))
+
+  const synth = await synthesizeAnswer(question, mode, synthNodes, edges, detected)
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const conflictNodeIds = new Set(detected.flatMap((c) => [c.nodeAId, c.nodeBId]))
   const citedNodeIds = new Set(synth.claims.flatMap((c) => c.supportingNodeIds))
 
   const finalNodes: TraceNode[] = nodes.map((n) => {
-    if (n.role === "resolved") return n
+    if (n.role === "resolved" && entityNodeIds.has(n.id)) return n
     if (conflictNodeIds.has(n.id)) return { ...n, role: "conflict" }
-    if (citedNodeIds.has(n.id)) return { ...n, role: "evidence" }
+    if (contentNodeIds.has(n.id) || citedNodeIds.has(n.id)) return { ...n, role: "evidence" }
     return n
   })
 

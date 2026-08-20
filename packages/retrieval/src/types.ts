@@ -35,6 +35,8 @@ export interface TraceEdge {
   to: number
   type: string
   reason?: string
+  /** e.g. valid_from/valid_to on OWNS — needed for "who was responsible when" questions. */
+  properties: Record<string, string | number | boolean>
 }
 
 export interface Conflict {

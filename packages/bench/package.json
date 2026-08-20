@@ -12,6 +12,7 @@
     "@aws-sdk/client-bedrock-runtime": "^3.900.0",
     "@workspace/graph-client": "workspace:*",
     "@workspace/graph-schema": "workspace:*",
+    "@workspace/retrieval": "workspace:*",
     "@workspace/vector-index": "workspace:*"
   },
   "devDependencies": {

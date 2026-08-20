@@ -103,14 +103,20 @@ export async function synthesizeAnswer(
     inputSchema: SYNTHESIZE_SCHEMA,
   })
 
-  const claims: Claim[] = out.claims
-    .filter((c) => out.answer.includes(c.text))
-    .map((c, i) => ({ id: `claim-${i}`, text: c.text, supportingNodeIds: c.supportingNodeIds }))
+  // Defensive: forced tool-use still occasionally omits an optional-shaped
+  // array field on a long/constrained question rather than sending `[]`.
+  const claims: Claim[] = Array.isArray(out.claims)
+    ? out.claims
+        .filter((c) => typeof c?.text === "string" && out.answer.includes(c.text))
+        .map((c, i) => ({ id: `claim-${i}`, text: c.text, supportingNodeIds: Array.isArray(c.supportingNodeIds) ? c.supportingNodeIds : [] }))
+    : []
 
   return {
     answer: out.answer,
     claims,
-    notFound: out.notFound,
-    conflictDescriptions: new Map(out.conflictDescriptions.map((d) => [d.index, { subject: d.subject, rationale: d.rationale }])),
+    notFound: Boolean(out.notFound),
+    conflictDescriptions: new Map(
+      Array.isArray(out.conflictDescriptions) ? out.conflictDescriptions.map((d) => [d.index, { subject: d.subject, rationale: d.rationale }]) : []
+    ),
   }
 }

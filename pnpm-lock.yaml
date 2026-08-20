@@ -114,6 +114,9 @@ importers:
       '@workspace/graph-schema':
         specifier: workspace:*
         version: link:../graph-schema
+      '@workspace/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
       '@workspace/vector-index':
         specifier: workspace:*
         version: link:../vector-index
@@ -237,6 +240,9 @@ importers:
       '@workspace/graph-schema':
         specifier: workspace:*
         version: link:../graph-schema
+      '@workspace/vector-index':
+        specifier: workspace:*
+        version: link:../vector-index
       zod:
         specifier: ^4.4.3
         version: 4.4.3

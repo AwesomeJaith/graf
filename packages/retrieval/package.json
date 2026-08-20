@@ -12,6 +12,7 @@
     "@aws-sdk/client-bedrock-runtime": "^3.900.0",
     "@workspace/graph-client": "workspace:*",
     "@workspace/graph-schema": "workspace:*",
+    "@workspace/vector-index": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

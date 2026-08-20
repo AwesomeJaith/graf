@@ -51,22 +51,23 @@ async function evalQuestion(
     question_type: q.question_type,
   }
   if (!answer?.answer) return base
-  const [correctness, completeness] = await Promise.all([
-    judgeCorrectness(q.question, q.gold_answer, answer.answer),
-    judgeCompleteness(answer.answer, q.answer_facts),
-  ])
-  return {
-    ...base,
-    correct: correctness.correct,
-    completeness,
-    documentRecall: documentRecall(
-      q.expected_doc_ids,
-      answer.document_ids ?? []
-    ),
-    invalidExtraDocuments: invalidExtraDocuments(
-      q.expected_doc_ids,
-      answer.document_ids ?? []
-    ),
+  const docMetrics = {
+    documentRecall: documentRecall(q.expected_doc_ids, answer.document_ids ?? []),
+    invalidExtraDocuments: invalidExtraDocuments(q.expected_doc_ids, answer.document_ids ?? []),
+  }
+  try {
+    const [correctness, completeness] = await Promise.all([
+      judgeCorrectness(q.question, q.gold_answer, answer.answer),
+      judgeCompleteness(answer.answer, q.answer_facts),
+    ])
+    return { ...base, correct: correctness.correct, completeness, ...docMetrics }
+  } catch (err) {
+    // One malformed judge response (occasionally an unescaped quote inside
+    // the model's own "reasoning" string breaks strict JSON parsing) drops
+    // that question's correctness/completeness rather than crashing the
+    // whole batch — document metrics don't depend on the judge call.
+    console.error(`judge failed for ${q.question_id}:`, err instanceof Error ? err.message : err)
+    return { ...base, ...docMetrics }
   }
 }
 

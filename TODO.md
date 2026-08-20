@@ -99,23 +99,23 @@ Confirmed facts (don't re-derive):
 - [ ] CSV table renderer, Slack-style message history renderer, generic file
       preview — cut for time, not required for the core demo path
 
-### 6. Eval (`packages/bench` eval harness) — baseline done, graph comparison pending
-- [x] `bench:ingest`, `bench:baseline` (vector RAG), `bench:eval` scripts —
-      confirmed running clean end to end (fixed two real bugs along the way:
-      Bedrock JSON-judge responses need brace-depth-aware extraction, not a
-      regex — a `}` inside a `"reasoning"` string broke naive matching; and
-      empty-text embed calls need a fallback like the ingest script already had)
-- [x] Baseline vector RAG scored on all 55 sample questions: 25% correctness /
-      37% completeness / 83% doc recall overall, but 0% correctness on
-      `project_related`, `conflicting_info`, `completeness`, `high_level` —
-      exactly the categories needing multi-doc reasoning/conflict resolution/
-      exhaustive retrieval that graph traversal should win on. Numbers +
-      per-category table in `packages/bench/README.md` and
-      `packages/bench/data/results/baseline-vector-rag.json`.
-- [ ] Run `@workspace/retrieval`'s answers on the same 55 questions through
-      `bench:eval` for the graph-retrieval comparison point (needs an
-      answers.jsonl in the documented format — retrieval pipeline owner to
-      produce, or point me at the pipeline call and I'll script it)
+### 6. Eval (`packages/bench` eval harness) — both sides done
+- [x] `bench:ingest`, `bench:baseline` (vector RAG), `bench:graph` (graph
+      retrieval), `bench:eval` all run clean end to end on all 55 questions
+- [x] Baseline vector RAG: 25% correctness / 37% completeness / 83% doc recall
+- [x] Graph retrieval (`@workspace/retrieval`): 19% correctness / 27%
+      completeness / **93%** doc recall — wins clearly on doc recall
+      (96-100% on `project_related`/`conflicting_info`, the cross-source
+      aggregation + conflict categories the connected ingestion was built
+      for), currently behind on correctness/completeness for reasons that
+      are about answer-synthesis input quality, not the traversal mechanism
+      — see the honest writeup in `packages/bench/README.md` (found/fixed a
+      real bug along the way: `dsid` wasn't declared in `graph-schema`'s
+      property lists, so schema-driven queries silently dropped it from every
+      result — fixed in both `graph-schema` and `ingest.ts`)
+- [ ] If there's time left: tighten the relevance-ranking cutoff further, or
+      re-rank with an LLM pass instead of pure cosine, to close the
+      correctness/completeness gap without losing the recall win
 
 ### 7. Submission
 - [x] README: setup, HydraDB usage explanation, how to run

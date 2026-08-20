@@ -62,7 +62,7 @@ export async function expandGraph(
       for (const rel of path.relationships) {
         const key = `${rel.sourceId}-${rel.type}-${rel.destinationId}`
         if (edges.has(key)) continue
-        edges.set(key, { id: key, from: rel.sourceId, to: rel.destinationId, type: rel.type })
+        edges.set(key, { id: key, from: rel.sourceId, to: rel.destinationId, type: rel.type, properties: rel.properties })
       }
     }
   }

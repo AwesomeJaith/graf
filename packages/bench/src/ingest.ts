@@ -126,6 +126,7 @@ async function main() {
       id: docId.get(doc.dsid)!,
       label: doc.label,
       primary_text: doc.primaryText,
+      dsid: doc.dsid,
       ...doc.properties,
     })
   }
