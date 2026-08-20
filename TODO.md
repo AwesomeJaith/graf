@@ -116,6 +116,26 @@ Confirmed facts (don't re-derive):
 - [ ] If there's time left: tighten the relevance-ranking cutoff further, or
       re-rank with an LLM pass instead of pure cosine, to close the
       correctness/completeness gap without losing the recall win
+- [x] Fixed a regression the above caused: content-search ran unconditionally
+      with no relevance floor, so even a cleanly-resolved query (Sam/Atlas)
+      pulled in ~30 coincidentally-similar bench nodes into the live trace.
+      Added a cosine-similarity floor (0.4) — back to an 11-node trace.
+- [x] Fixed run order footgun: `bench:ingest` rebuilds the shared embedding
+      sidecar from scratch, `seed:demo` merges into it — running ingest after
+      seed:demo wipes the demo graph's embeddings. README now documents
+      ingest-then-seed; re-ran seed:demo to restore them.
+
+### 8. Known gaps if picked back up
+- Eval correctness/completeness (19%/27%) is still behind the vector-RAG
+  baseline (25%/37%) despite winning decisively on doc recall (93% vs 83%)
+  — see packages/bench/README.md's honest root-cause writeup. Next lever:
+  stricter/LLM-based re-ranking of touched nodes before the synthesis call.
+- No `GET /api/graph/schema`, no CSV/Slack-style/file-preview renderers, no
+  SSE streaming of pipeline stages (client-side ticker instead) — all
+  deliberate scope cuts for the deadline, not oversights.
+- User has a cloud HydraDB API key in `.env` (`HYDRA_DB_API_KEY`) but no
+  host/endpoint was provided for it — app still points at the local Docker
+  node, which is fully working and demo-ready. Switch if/when given the host.
 
 ### 7. Submission
 - [x] README: setup, HydraDB usage explanation, how to run
