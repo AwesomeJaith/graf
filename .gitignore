@@ -36,6 +36,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -46,3 +47,10 @@ next-env.d.ts
 
 # proprietary
 prompts/
+
+# generated embeddings sidecar (reproducible via `pnpm run seed:demo` +
+# `pnpm --filter @workspace/bench run ingest`, ~9MB, not worth committing)
+packages/bench/data/vector-index.sample.json
+
+# local HydraDB dev node state
+.hydradb/

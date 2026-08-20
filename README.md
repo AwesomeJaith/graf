@@ -1,21 +1,132 @@
-# shadcn/ui monorepo template
+# Graf
 
-This is a Next.js monorepo template with shadcn/ui.
+Graf is a graph-native enterprise knowledge assistant built for **Hack Hydra
+Track 1** (Enterprise Context & Ontology) on top of [HydraDB](https://github.com/hydra-db/hydradb).
 
-## Adding components
+Ask a question in plain language — *"What did Sam decide about the Atlas
+launch?"* — and Graf resolves ambiguous references against the graph
+("Sam" → 95% Sam Ratnaparkhi vs. Samuel Chen / Sam Wilson), traverses real
+relationships to gather evidence, detects and resolves conflicting
+information using timestamps and explicit `SUPERSEDES`/`CONTRADICTS`
+edges, and answers with claim-level citations back into an interactive
+graph trace. Clicking a sentence in the answer highlights the exact nodes
+and edges that support it.
 
-To add components to your app, run the following command at the root of your `web` app:
+## Why HydraDB, not just a vector store
+
+The retrieval path is graph-native end to end, not vector search with a
+graph skin on top:
+
+- **Entity resolution** pulls real candidate nodes from HydraDB
+  (`MATCH (n:Person) ...`) and ranks them using each candidate's actual
+  graph neighbors (`algo.SSpaths`), not just name similarity — so "Sam" is
+  resolved by noticing which candidate is actually `WORKS_ON` the "Atlas"
+  the question also mentions.
+- **Multi-hop traversal** uses HydraDB's native `algo.SSpaths` path
+  procedure to walk bounded paths (Person → Project → Channel → Decision →
+  Document) in one query per resolved entity, returning real relationship
+  ids and properties.
+- **Conflict/temporal reasoning** is a graph fact, not an LLM guess: a
+  `CONTRADICTS` or `SUPERSEDES` edge between two evidence nodes *is* the
+  conflict, and the resolution (explicit direction, or the newer timestamp)
+  is deterministic and inspectable.
+- **Provenance** — every node/edge in the "Knowledge Trace" panel is the
+  literal subgraph the pipeline touched during retrieval, not a rendered
+  mock.
+- **Schema-adaptive** — `packages/graph-schema` describes the active
+  label/relationship model; point `GRAF_SCHEMA_PATH` at a different JSON
+  file to run Graf against a different HydraDB graph without touching code.
+
+See [`packages/retrieval/src/index.ts`](packages/retrieval/src/index.ts) for
+the full pipeline: query understanding → entity resolution → graph query
+planning → HydraDB traversal → evidence collection → conflict/temporal
+reasoning → answer synthesis.
+
+## Architecture
+
+```
+apps/web                 Next.js chat UI + /api/chat route
+packages/retrieval        The pipeline above (LLM calls via AWS Bedrock)
+packages/graph-client      HydraDB client — Bolt (neo4j-driver, writes/scripts)
+                           + HTTP/JSON (reads from the Next.js server)
+packages/graph-schema      Schema-agnostic entity/relationship model
+packages/vector-index      Embedding sidecar for entity-resolution ranking
+                           and the baseline-RAG comparison in the eval harness
+packages/bench             EnterpriseRAG-Bench ingestion + eval harness
+packages/ui                Shared shadcn/ui component library
+```
+
+## Setup
+
+Prerequisites: Node 20+, pnpm, Docker, an AWS account with Bedrock access to
+an Anthropic Claude model (Converse API) and Titan Embed v2.
 
 ```bash
-pnpm dlx shadcn@latest add button -c apps/web
+pnpm install
 ```
 
-This will place the ui components in the `packages/ui/src/components` directory.
+### 1. Run a local HydraDB node
 
-## Using components
+```bash
+mkdir -p .hydradb/store .hydradb/cache
+printf '%s\n' 'local-development-token-32-bytes' > .hydradb/auth-token
 
-To use the components in your app, import them from the `ui` package.
-
-```tsx
-import { Button } from "@workspace/ui/components/button";
+docker run -d --name graf-hydradb \
+  --user "$(id -u):$(id -g)" \
+  -p 7687:7687 -p 8443:8443 -p 9090:9090 \
+  -v "$PWD/.hydradb:/data" \
+  -e CLOUD_PROVIDER=local -e LOCAL_PATH=/data/store \
+  -e GRAPH_NAMESPACE=default -e GRAPH_ID=default \
+  -e GRAPH_CELL_ID=cell-0 -e GRAPH_CELLS=cell-0 -e GRAPH_NODE_ID=node-0 \
+  -e GRAPH_BOLT_NODE_ADDRESSES=node-0=127.0.0.1:7687 \
+  -e GRAPH_ADVERTISED_BOLT_ADDR=127.0.0.1:7687 \
+  -e GRAPH_DATA_CACHE_DIR=/data/cache \
+  -e GRAPH_AUTH_TOKEN_FILE=/data/auth-token \
+  -e GRAPH_ALLOW_PLAINTEXT=true -e RUST_MIN_STACK=33554432 \
+  ghcr.io/hydra-db/hydradb:latest
 ```
+
+To point Graf at a different (e.g. shared/staging) HydraDB instance instead,
+just set the `HYDRADB_*` vars below to that instance's connection details.
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+`.env.example` documents every variable; defaults already match the local
+Docker node above. You'll need a working AWS credential chain
+(`aws sts get-caller-identity` should succeed) with Bedrock access to the
+two model ids in `.env.example`.
+
+### 3. Load data
+
+```bash
+pnpm run seed:demo      # hand-authored demo graph (Sam/Atlas ambiguity, conflicting launch dates, temporal ownership)
+pnpm run bench:ingest   # EnterpriseRAG-Bench sample slice (packages/bench/data) — optional, for the eval harness
+```
+
+### 4. Run the app
+
+```bash
+pnpm --filter web dev
+```
+
+Open http://localhost:3000.
+
+## Benchmark evaluation
+
+```bash
+pnpm run bench:eval        # graph-native retrieval, scored against EnterpriseRAG-Bench gold answers
+pnpm run bench:baseline    # baseline vector-only RAG, for comparison
+```
+
+Results are broken down by question category (multi-hop, temporal,
+conflicting-info, etc.), not just one aggregate score.
+
+## License
+
+MIT — see [LICENSE.md](LICENSE.md). HydraDB itself is AGPL-3.0 licensed;
+this project only depends on it as a client, it does not embed or modify
+HydraDB source.

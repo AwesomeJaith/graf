@@ -7,13 +7,19 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "format": "turbo format",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "seed:demo": "tsx packages/graph-client/scripts/seed-demo.ts",
+    "bench:ingest": "tsx packages/bench/src/ingest.ts",
+    "bench:baseline": "tsx packages/bench/src/baseline-vector-rag.ts",
+    "bench:eval": "tsx packages/bench/src/run-eval.ts"
   },
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
+    "dotenv": "^17.2.3",
     "prettier": "^3.8.3",
     "prettier-plugin-tailwindcss": "^0.8.0",
+    "tsx": "^4.20.6",
     "turbo": "^2.9.18",
     "typescript": "^5"
   },
