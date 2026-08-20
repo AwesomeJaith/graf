@@ -16,9 +16,61 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR =
   process.env.BENCH_DATA_DIR ??
   join(__dirname, "..", "data", "enterprise-rag-bench-sample")
+const QUESTIONS_FILE = process.env.BENCH_QUESTIONS_FILE ?? "questions.sample.jsonl"
 const VECTOR_INDEX_PATH =
   process.env.VECTOR_INDEX_PATH ??
   join(__dirname, "..", "data", "vector-index.sample.json")
+// Full-corpus runs write hundreds of thousands of rows — one UNWIND per
+// label/rel-type with every row inline would build a single Bolt message far
+// past any reasonable size and either time out or get rejected outright. Kept
+// small because node properties now carry full multi-field document text
+// (post content-extraction fix), not just short titles — 1000 rows of full
+// document bodies is a much bigger payload than 1000 rows used to be.
+const WRITE_BATCH_SIZE = 200
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Runs write batches in small groups (short-lived sessions, visible progress
+ * for a many-hour run) with retry-with-backoff around each group — a bolt
+ * connection through the local docker-proxied HydraDB dev instance has been
+ * seen to drop mid-stream under sustained write load (EPIPE), and this is a
+ * multi-hour unattended job that shouldn't abort entirely over one transient
+ * disconnect.
+ */
+async function runWritesWithProgress(
+  specs: { query: string; params?: Record<string, unknown> }[],
+  label: string,
+  groupSize = 5
+): Promise<void> {
+  const groups = chunk(specs, groupSize)
+  let done = 0
+  for (const group of groups) {
+    let attempt = 0
+    for (;;) {
+      try {
+        await runWrites(group)
+        break
+      } catch (err) {
+        attempt++
+        if (attempt > 5) throw err
+        const delayMs = 2000 * attempt
+        console.warn(`  ${label}: write group failed (attempt ${attempt}/5), retrying in ${delayMs}ms: ${(err as Error).message}`)
+        await sleep(delayMs)
+      }
+    }
+    done += group.length
+    console.log(`  ${label}: ${done}/${specs.length} batches written`)
+  }
+}
 
 // Ids below 10000 are reserved for the hand-authored seed-demo.ts graph so
 // both can coexist in the same HydraDB namespace without id collisions.
@@ -38,9 +90,9 @@ interface RelRow {
 
 async function main() {
   const rawDocs = loadRawDocs(DATA_DIR)
-  const questions = loadQuestions(DATA_DIR)
+  const questions = loadQuestions(DATA_DIR, QUESTIONS_FILE)
   console.log(
-    `Loaded ${rawDocs.length} raw docs, ${questions.length} sample questions from ${DATA_DIR}`
+    `Loaded ${rawDocs.length} raw docs, ${questions.length} questions from ${DATA_DIR}`
   )
 
   const normalized: NormalizedDoc[] = []
@@ -202,34 +254,52 @@ async function main() {
     }
   }
 
-  // Cross-link resolution: substring-match every doc's linkTexts against every
-  // other doc's knownKeys. O(n^2) over ~135 docs is trivial and this is the
-  // only way to connect docs that reference each other by ticket key / thread
-  // id / pr number rather than by dataset uuid.
+  // Cross-link resolution: connect docs that reference each other by ticket
+  // key / thread id / pr number rather than by dataset uuid. The original
+  // approach substring-matched every doc's linkTexts against every other
+  // doc's knownKeys directly — O(n^2), fine at ~135 docs, impossible at
+  // full-corpus scale (hundreds of billions of comparisons). Instead, index
+  // every knownKey once, then tokenize each doc's linkTexts and look each
+  // token up — O(total link-text tokens), linear in corpus size. This trades
+  // true substring containment for exact-token matching, which loses nothing
+  // for identifiers like ticket keys/PR numbers/thread ids (they're already
+  // clean alphanumeric tokens) while avoiding spurious partial-substring hits.
+  const keyIndex = new Map<string, NormalizedDoc[]>()
+  for (const doc of normalized) {
+    for (const key of doc.knownKeys) {
+      if (key.length < 4) continue
+      const k = key.toLowerCase()
+      const list = keyIndex.get(k) ?? []
+      list.push(doc)
+      keyIndex.set(k, list)
+    }
+  }
   let referenceCount = 0
   for (const a of normalized) {
-    const haystacks = a.linkTexts.map((t) => t.toLowerCase())
-    if (haystacks.length === 0) continue
-    for (const b of normalized) {
-      if (a === b) continue
-      const hit = b.knownKeys.some(
-        (key) =>
-          key.length >= 4 &&
-          haystacks.some((h) => h.includes(key.toLowerCase()))
-      )
-      if (!hit) continue
-      relRows.push({
-        relType: "REFERENCES",
-        sourceLabel: a.label,
-        destinationLabel: b.label,
-        row: {
-          id: id(),
-          rel_type: "REFERENCES",
-          sourceId: docId.get(a.dsid)!,
-          destinationId: docId.get(b.dsid)!,
-        },
-      })
-      referenceCount++
+    if (a.linkTexts.length === 0) continue
+    const seenTargets = new Set<NormalizedDoc>()
+    for (const text of a.linkTexts) {
+      const tokens = text.toLowerCase().match(/[a-z0-9_-]{4,}/g) ?? []
+      for (const token of tokens) {
+        const hits = keyIndex.get(token)
+        if (!hits) continue
+        for (const b of hits) {
+          if (b === a || seenTargets.has(b)) continue
+          seenTargets.add(b)
+          relRows.push({
+            relType: "REFERENCES",
+            sourceLabel: a.label,
+            destinationLabel: b.label,
+            row: {
+              id: id(),
+              rel_type: "REFERENCES",
+              sourceId: docId.get(a.dsid)!,
+              destinationId: docId.get(b.dsid)!,
+            },
+          })
+          referenceCount++
+        }
+      }
     }
   }
   console.log(
@@ -268,13 +338,13 @@ async function main() {
     `Added ${contradictionCount} CONTRADICTS edges from conflicting_info questions.`
   )
 
-  const nodeWrites = [...nodesByLabel.entries()].map(([label, rows]) =>
-    upsertNodesBatch(label, rows)
+  const totalNodes = [...nodesByLabel.values()].reduce((n, r) => n + r.length, 0)
+  const nodeWrites = [...nodesByLabel.entries()].flatMap(([label, rows]) =>
+    chunk(rows, WRITE_BATCH_SIZE).map((batch) => upsertNodesBatch(label, batch))
   )
-  await runWrites(nodeWrites)
-  console.log(
-    `Wrote ${[...nodesByLabel.values()].reduce((n, r) => n + r.length, 0)} nodes.`
-  )
+  console.log(`Writing ${totalNodes} nodes in ${nodeWrites.length} batches of up to ${WRITE_BATCH_SIZE}...`)
+  await runWritesWithProgress(nodeWrites, "nodes")
+  console.log(`Wrote ${totalNodes} nodes.`)
 
   const relGroups = new Map<string, RelRow[]>()
   for (const r of relRows) {
@@ -283,20 +353,23 @@ async function main() {
     list.push(r)
     relGroups.set(key, list)
   }
-  const relWrites = [...relGroups.entries()].map(([key, rows]) => {
+  const relWrites = [...relGroups.entries()].flatMap(([key, rows]) => {
     const [relType, sourceLabel, destinationLabel] = key.split("|") as [
       string,
       string,
       string,
     ]
-    return upsertRelationshipsBatch(
-      relType,
-      sourceLabel,
-      destinationLabel,
-      rows.map((r) => r.row)
+    return chunk(rows, WRITE_BATCH_SIZE).map((batch) =>
+      upsertRelationshipsBatch(
+        relType,
+        sourceLabel,
+        destinationLabel,
+        batch.map((r) => r.row)
+      )
     )
   })
-  await runWrites(relWrites)
+  console.log(`Writing ${relRows.length} relationships in ${relWrites.length} batches of up to ${WRITE_BATCH_SIZE}...`)
+  await runWritesWithProgress(relWrites, "relationships")
   console.log(
     `Wrote ${relRows.length} relationships across ${relGroups.size} label-pair batches.`
   )
@@ -307,6 +380,14 @@ async function main() {
     "Embedding entities for the vector-index sidecar (this calls Bedrock once per entity)..."
   )
   const index = new VectorIndex()
+  // A full-corpus run embeds 500k+ entities over many hours — load whatever
+  // a prior (possibly interrupted) run already saved and skip those ids, so
+  // re-running this script after a crash/restart resumes instead of redoing
+  // everything from scratch.
+  index.load(VECTOR_INDEX_PATH)
+  const alreadyEmbedded = index.size()
+  if (alreadyEmbedded > 0) console.log(`Resuming: ${alreadyEmbedded} entities already embedded from a prior run.`)
+
   const embedTargets: {
     id: number
     label: string
@@ -335,26 +416,42 @@ async function main() {
       })
     }
   }
+  const remaining = embedTargets.filter((t) => !index.hasId(t.id))
+  console.log(`${embedTargets.length} entities to embed, ${remaining.length} remaining after resume-skip.`)
+
   let embedded = 0
+  let failed = 0
   const CONCURRENCY = 8
+  const SAVE_EVERY = 2000
+  let sinceLastSave = 0
   try {
-    for (let i = 0; i < embedTargets.length; i += CONCURRENCY) {
-      const batch = embedTargets.slice(i, i + CONCURRENCY)
-      const vectors = await Promise.all(batch.map((t) => embedText(t.text)))
-      index.upsert(
-        batch.map((t, j) => ({
-          id: t.id,
-          label: t.label,
-          primaryText: t.primaryText,
-          vector: vectors[j]!,
-        }))
+    for (let i = 0; i < remaining.length; i += CONCURRENCY) {
+      const batch = remaining.slice(i, i + CONCURRENCY)
+      const results = await Promise.all(
+        batch.map(async (t) => {
+          try {
+            return { t, vector: await embedText(t.text) }
+          } catch (err) {
+            failed++
+            console.warn(`  embed failed for id=${t.id} (${t.label}): ${(err as Error).message}`)
+            return null
+          }
+        })
       )
+      const ok = results.filter((r): r is { t: (typeof batch)[number]; vector: number[] } => r !== null)
+      index.upsert(ok.map(({ t, vector }) => ({ id: t.id, label: t.label, primaryText: t.primaryText, vector })))
       embedded += batch.length
-      console.log(`  embedded ${embedded}/${embedTargets.length}`)
+      sinceLastSave += batch.length
+      console.log(`  embedded ${embedded}/${remaining.length} (${failed} failed so far)`)
+      if (sinceLastSave >= SAVE_EVERY) {
+        index.save(VECTOR_INDEX_PATH)
+        sinceLastSave = 0
+        console.log(`  checkpoint saved (${index.size()} total embeddings)`)
+      }
     }
   } finally {
     index.save(VECTOR_INDEX_PATH)
-    console.log(`Saved ${index.size()} embeddings to ${VECTOR_INDEX_PATH}`)
+    console.log(`Saved ${index.size()} embeddings to ${VECTOR_INDEX_PATH} (${failed} failed and skipped).`)
   }
 }
 

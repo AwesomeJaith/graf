@@ -1,5 +1,5 @@
 import { callStructured } from "./llm"
-import { pickTimestamp, type DetectedConflict } from "./conflicts"
+import type { DetectedConflict } from "./conflicts"
 import type { Claim, ResponseMode, TraceEdge, TraceNode } from "./types"
 
 const MODE_INSTRUCTIONS: Record<ResponseMode, string> = {
@@ -67,6 +67,23 @@ export interface SynthesizeResult {
   conflictDescriptions: Map<number, { subject: string; rationale: string }>
 }
 
+/**
+ * Every property on the node, not just a hand-picked timestamp/source — the
+ * model was citing specific dates/facts ("assigned on March 5") that were
+ * actually paraphrased from whatever pickTimestamp() happened to surface,
+ * with no way for a user to verify them against the real property. Showing
+ * everything means a claim can only cite what's genuinely there, and the
+ * node inspector (apps/web) shows the same full property set so the user
+ * can check it against the answer.
+ */
+function compactProperties(properties: Record<string, string | number | boolean>): string {
+  const entries = Object.entries(properties).map(([key, value]) => {
+    const str = String(value)
+    return [key, str.length > 240 ? `${str.slice(0, 240)}…` : str]
+  })
+  return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : "{}"
+}
+
 export async function synthesizeAnswer(
   question: string,
   mode: ResponseMode,
@@ -75,11 +92,7 @@ export async function synthesizeAnswer(
   conflicts: DetectedConflict[]
 ): Promise<SynthesizeResult> {
   const evidenceLines = nodes
-    .map((n) => {
-      const ts = pickTimestamp(n)
-      const source = n.properties.source
-      return `- id=${n.id} [${n.label}] "${n.primaryText}"${ts ? ` (${ts})` : ""}${source ? ` source=${source}` : ""}`
-    })
+    .map((n) => `- id=${n.id} [${n.label}] "${n.primaryText}" properties=${compactProperties(n.properties)}`)
     .join("\n")
 
   const edgeLines = edges
@@ -98,7 +111,9 @@ export async function synthesizeAnswer(
     .join("\n")
 
   const out = await callStructured<SynthesizeOutput>({
-    system: `You are Graf, an enterprise assistant that answers questions using only the graph evidence provided. ${MODE_INSTRUCTIONS[mode]} If a conflict is listed, respect the graph's selected side rather than re-deciding it yourself, but you may explain it. Relationship properties like valid_from/valid_to mark when that relationship was true — for "who was responsible/owned X when Y happened" questions, pick the person whose valid_from/valid_to range actually covers the relevant date, not everyone who was ever connected to that entity. A missing/empty valid_to means the relationship is still current. Never invent facts not present in the evidence, and never infer a specific claimed action (e.g. "approved", "decided", "confirmed") from a weaker relationship like authorship or mention — if the evidence doesn't contain that specific action or statement, set notFound=true and say so plainly rather than guessing from adjacent context.`,
+    system: `You are Graf, an enterprise assistant that answers questions using only the graph evidence provided. ${MODE_INSTRUCTIONS[mode]} If a conflict is listed, respect the graph's selected side rather than re-deciding it yourself, but you may explain it. Relationship properties like valid_from/valid_to mark when that relationship was true — for "who was responsible/owned X when Y happened" questions, pick the person whose valid_from/valid_to range actually covers the relevant date, not everyone who was ever connected to that entity. A missing/empty valid_to means the relationship is still current. Never invent facts not present in the evidence, and never infer a specific claimed action (e.g. "approved", "decided", "confirmed") from a weaker relationship like authorship or mention — if the evidence doesn't contain that specific action or statement, set notFound=true and say so plainly rather than guessing from adjacent context.
+
+Every date or fact you state must name-check the exact property or edge it came from, in your reasoning, and the wording must match what that property actually records — a node's \`created_at\` means it was *created* then, not "assigned" or "decided" then, unless there's a real \`assigned_at\`/\`decided_at\` property or an ASSIGNED_TO/DECIDED-style edge with its own date. If a question asks "when was X assigned" and the only date on the node is \`created_at\`, either say "created on" (accurate) or, if the question specifically needs an assignment date that isn't there, say you can't find that specific date rather than reusing a different date under the wrong label. Do not state a date more precisely or with more specific framing than the property name supports.`,
     prompt: [
       `Question: ${question}`,
       "",

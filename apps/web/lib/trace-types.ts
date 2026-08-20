@@ -10,11 +10,10 @@ export interface TraceNode {
   kind: string // e.g. "Person", "Project", "Message", "Document", "Decision"
   role: TraceNodeRole
   subtitle?: string
-  source?: string
-  timestamp?: string
   /** Full body text (Message.text, Document.content, Issue/Task.body, ...) — what the node inspector renders. */
   content?: string
-  url?: string
+  /** Every raw property on the node (source, url, created_at, ... whatever the label declares), so a claim can be checked against the actual data instead of a paraphrase. */
+  properties: Record<string, string | number | boolean>
 }
 
 export interface TraceEdge {

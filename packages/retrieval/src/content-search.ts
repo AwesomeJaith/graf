@@ -19,6 +19,29 @@ function loadIndex(): VectorIndex {
   return cachedIndex
 }
 
+async function hydrate(matches: { id: number; label: string; primaryText: string }[], schema: GraphSchema): Promise<ResolvedNode[]> {
+  const results: ResolvedNode[] = []
+  for (const match of matches) {
+    const schemaEntry = findNodeLabel(schema, match.label)
+    const spec = getNodeById(match.label, match.id, schemaEntry)
+    try {
+      const rows = await runQueryHttp(spec.query, spec.params)
+      const row = rows[0]
+      if (!row) continue
+      const { id: _id, label: rowLabel, primary_text, ...rest } = row
+      results.push({
+        id: match.id,
+        label: (rowLabel as string) ?? match.label,
+        primaryText: (primary_text as string) ?? match.primaryText,
+        properties: rest as ResolvedNode["properties"],
+      })
+    } catch {
+      continue
+    }
+  }
+  return results
+}
+
 /**
  * Semantic entry point into content nodes (Document/Message/Task/Issue)
  * that named-entity resolution alone can't reach — most factual questions
@@ -44,26 +67,31 @@ export async function searchContent(question: string, schema: GraphSchema, topK 
   // (Callers doing interactive search-as-you-type, e.g. @mentions, pass a
   // much lower floor since a short partial query embeds less confidently.)
   const matches = index.search(queryVector, { topK }).filter((m) => m.score >= minScore)
-  const results: ResolvedNode[] = []
-  for (const match of matches) {
-    const schemaEntry = findNodeLabel(schema, match.label)
-    const spec = getNodeById(match.label, match.id, schemaEntry)
-    try {
-      const rows = await runQueryHttp(spec.query, spec.params)
-      const row = rows[0]
-      if (!row) continue
-      const { id: _id, label: rowLabel, primary_text, ...rest } = row
-      results.push({
-        id: match.id,
-        label: (rowLabel as string) ?? match.label,
-        primaryText: (primary_text as string) ?? match.primaryText,
-        properties: rest as ResolvedNode["properties"],
-      })
-    } catch {
-      continue
-    }
+  return hydrate(matches, schema)
+}
+
+/**
+ * Semantic candidate lookup for a specific mention, restricted to the label(s)
+ * it could plausibly be. Entity resolution used to pull an unfiltered,
+ * arbitrary `LIMIT 50` slice of an entire label — fine when a label has a few
+ * dozen rows total, useless once a label has tens/hundreds of thousands (the
+ * real match is very unlikely to be in an arbitrary unordered 50-row slice).
+ * Searching the embedding index by the mention text itself scales with corpus
+ * size instead of breaking past it.
+ */
+export async function searchCandidatesByLabel(mentionText: string, labels: string[], schema: GraphSchema, topK = 20): Promise<ResolvedNode[]> {
+  const index = loadIndex()
+  if (index.size() === 0 || labels.length === 0) return []
+
+  let queryVector: number[]
+  try {
+    queryVector = await embedText(mentionText)
+  } catch {
+    return []
   }
-  return results
+
+  const matches = index.search(queryVector, { topK, labels })
+  return hydrate(matches, schema)
 }
 
 export interface MentionCandidate {
@@ -112,7 +140,11 @@ export async function rankNodeIdsByRelevance(question: string, candidateIds: num
     return unranked
   }
 
-  const ranked = index.search(queryVector, { topK: index.size() })
+  // Score only the ids the traversal actually touched instead of the whole
+  // index — at full-corpus scale (500k+ embedded entities) sorting the
+  // entire index just to filter it back down to a few dozen candidates is
+  // by far the most expensive step in the request for no benefit.
+  const ranked = index.searchAmong(queryVector, candidateIds, candidateIds.length)
   const rankPosition = new Map(ranked.map((m, i) => [m.id, i]))
 
   const withEmbedding = candidateIds.filter((id) => rankPosition.has(id))

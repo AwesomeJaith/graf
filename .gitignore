@@ -51,6 +51,16 @@ prompts/
 # generated embeddings sidecar (reproducible via `pnpm run seed:demo` +
 # `pnpm --filter @workspace/bench run ingest`, ~9MB, not worth committing)
 packages/bench/data/vector-index.sample.json
+packages/bench/data/vector-index.full.json
+# binary sidecars written alongside each index descriptor above
+packages/bench/data/vector-index.*.meta.jsonl
+packages/bench/data/vector-index.*.vectors.bin
+
+# full upstream EnterpriseRAG-Bench corpus (~4GB clone, re-fetchable, never commit)
+packages/bench/data/enterprise-rag-bench-full/
 
 # local HydraDB dev node state
 .hydradb/
+
+# local chat-history sqlite db
+.data/

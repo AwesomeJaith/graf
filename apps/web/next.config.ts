@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
   // neo4j-driver does raw Buffer manipulation for the Bolt binary protocol —
   // bundling it through Turbopack corrupts that (RangeError on session.run).
   // Keep it as a native require() instead.
-  serverExternalPackages: ["neo4j-driver"],
+  serverExternalPackages: ["neo4j-driver", "better-sqlite3"],
 }
 
 export default nextConfig

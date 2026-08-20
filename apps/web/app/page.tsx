@@ -90,11 +90,7 @@ export default function Page() {
       />
 
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between px-5 py-3.5">
-          <div className="flex items-center gap-2">
-            <div className="size-2 rounded-[3px] bg-primary" />
-            <span className="text-sm font-semibold">Graf</span>
-          </div>
+        <header className="flex items-center justify-end px-5 py-3.5">
           <SettingsMenu showReasoningByDefault={showReasoningByDefault} onShowReasoningByDefaultChange={setShowReasoningByDefault} />
         </header>
 

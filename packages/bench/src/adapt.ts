@@ -48,6 +48,33 @@ function personName(raw: string): string {
   return raw.includes("_") && raw === raw.toLowerCase() ? titleCase(raw) : raw
 }
 
+function fieldToText(raw: Record<string, unknown>, field: string): string {
+  const value = raw[field]
+  return typeof value === "string" ? value : strList(value).join("\n")
+}
+
+/**
+ * The benchmark declares which of a document's own fields actually hold body
+ * text via `content_field_names` — it varies per document/source (a confluence
+ * page might be `body` or `content`; a jira ticket might need `description` alone
+ * or a dozen fields like `investigation`/`root_cause`/`resolution`/`comments`).
+ * Reading a single hardcoded field per source type silently drops most of the
+ * real content for many documents — read the declared fields instead, and only
+ * fall back to a fixed field when a document doesn't declare any.
+ */
+function resolveContent(raw: Record<string, unknown>, fallbackFields: string[]): string {
+  const declared = strList(raw.content_field_names)
+  const fields = declared.length > 0 ? declared : fallbackFields
+  const multi = fields.length > 1
+  return fields
+    .map((field) => {
+      const text = fieldToText(raw, field)
+      return text ? (multi ? `${titleCase(field)}:\n${text}` : text) : ""
+    })
+    .filter(Boolean)
+    .join("\n\n")
+}
+
 function people(
   entries: { relation: PersonMention["relation"]; values: unknown }[]
 ): PersonMention[] {
@@ -69,7 +96,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     primaryText: str(raw.title),
     properties: {
       title: str(raw.title),
-      content: str(raw.body),
+      content: resolveContent(raw, ["body"]),
       url: `confluence://${str(raw.space)}`,
       source: "confluence",
       created_at: str(raw.created_at),
@@ -91,7 +118,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     primaryText: str(raw.title),
     properties: {
       title: str(raw.title),
-      content: str(raw.content),
+      content: resolveContent(raw, ["content"]),
       url: str(raw.path) || str(raw.original_location),
       source: "google_drive",
       created_at: str(raw.created_at),
@@ -107,13 +134,6 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
   }),
 
   fireflies: ({ dsid, sourceType, raw }) => {
-    const content = [
-      str(raw.summary),
-      strList(raw.next_steps).join("\n"),
-      strList(raw.action_items).join("\n"),
-    ]
-      .filter(Boolean)
-      .join("\n\n")
     return {
       dsid,
       sourceType,
@@ -121,7 +141,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
       primaryText: str(raw.title),
       properties: {
         title: str(raw.title),
-        content,
+        content: resolveContent(raw, ["summary", "next_steps", "action_items"]),
         url: str(raw.meeting_id),
         source: "fireflies",
         created_at: str(raw.recorded_at),
@@ -141,14 +161,13 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
   },
 
   gmail: ({ dsid, sourceType, raw }) => {
-    const messages = strList(raw.messages).join("\n\n---\n\n")
     return {
       dsid,
       sourceType,
       label: "Message",
       primaryText: str(raw.subject),
       properties: {
-        text: messages || str(raw.subject),
+        text: resolveContent(raw, ["messages"]) || str(raw.subject),
         source: "gmail",
         sent_at: str(raw.first_email_at),
         thread_id: str(raw.thread_id),
@@ -163,22 +182,25 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     }
   },
 
-  slack: ({ dsid, sourceType, raw }) => ({
-    dsid,
-    sourceType,
-    label: "Message",
-    primaryText: str(raw.text).slice(0, 140),
-    properties: {
-      text: str(raw.text),
-      source: "slack",
-      sent_at: str(raw.first_message_ts),
-      thread_id: str(raw.thread_ts),
-    },
-    people: people([{ relation: "AUTHORED", values: raw.participants }]),
-    channelKey: str(raw.channel) || undefined,
-    knownKeys: [dsid, str(raw.thread_ts)].filter(Boolean),
-    linkTexts: [],
-  }),
+  slack: ({ dsid, sourceType, raw }) => {
+    const text = resolveContent(raw, ["text"])
+    return {
+      dsid,
+      sourceType,
+      label: "Message",
+      primaryText: text.slice(0, 140),
+      properties: {
+        text,
+        source: "slack",
+        sent_at: str(raw.first_message_ts),
+        thread_id: str(raw.thread_ts),
+      },
+      people: people([{ relation: "AUTHORED", values: raw.participants }]),
+      channelKey: str(raw.channel) || undefined,
+      knownKeys: [dsid, str(raw.thread_ts)].filter(Boolean),
+      linkTexts: [],
+    }
+  },
 
   jira: ({ dsid, sourceType, raw }) => ({
     dsid,
@@ -187,7 +209,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     primaryText: str(raw.summary),
     properties: {
       title: str(raw.summary),
-      description: str(raw.summary),
+      description: resolveContent(raw, ["description"]),
       status: str(raw.status),
       source: "jira",
       created_at: str(raw.created_at),
@@ -213,7 +235,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     primaryText: str(raw.title),
     properties: {
       title: str(raw.title),
-      description: str(raw.description),
+      description: resolveContent(raw, ["description"]),
       status: str(raw.status),
       source: "linear",
       created_at: str(raw.created_at),
@@ -234,7 +256,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     primaryText: str(raw.title),
     properties: {
       title: str(raw.title),
-      body: str(raw.body) || str(raw.release_notes),
+      body: resolveContent(raw, ["body", "release_notes"]),
       status: str(raw.state),
       source: "github",
       created_at: str(raw.created_at),
@@ -255,9 +277,7 @@ const ADAPTERS: Record<string, (doc: RawDoc) => NormalizedDoc | undefined> = {
     primaryText: str(raw.company_name),
     properties: {
       title: str(raw.company_name),
-      content: [str(raw.next_step), strList(raw.blockers).join("; ")]
-        .filter(Boolean)
-        .join(" — "),
+      content: resolveContent(raw, ["next_step", "blockers"]),
       url: str(raw.company_domain),
       source: "hubspot",
       created_at: str(raw.created_at),

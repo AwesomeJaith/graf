@@ -2,8 +2,9 @@
 
 import * as React from "react"
 import { motion } from "motion/react"
+import { Dialog } from "@base-ui/react/dialog"
 
-import { ExternalLink, X } from "lucide-react"
+import { FileText, X } from "lucide-react"
 
 import type { Trace, TraceNode } from "@/lib/trace-types"
 import { cn } from "@workspace/ui/lib/utils"
@@ -35,9 +36,18 @@ interface EdgePath {
 export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNodeClick }: GraphTraceProps) {
   const columns = React.useMemo(() => layoutColumns(trace), [trace])
   const containerRef = React.useRef<HTMLDivElement>(null)
+  const inspectorRef = React.useRef<HTMLDivElement>(null)
   const nodeRefs = React.useRef(new Map<string, HTMLDivElement>())
   const [edgePaths, setEdgePaths] = React.useState<EdgePath[]>([])
   const [inspected, setInspected] = React.useState<TraceNode | null>(null)
+  const [viewingNode, setViewingNode] = React.useState<TraceNode | null>(null)
+
+  // The inspector panel opens below the graph, possibly off-screen — bring it
+  // (not the whole chat) into view, and only scroll as far as needed.
+  React.useEffect(() => {
+    if (!inspected) return
+    inspectorRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+  }, [inspected])
 
   const measure = React.useCallback(() => {
     const container = containerRef.current
@@ -193,32 +203,32 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
         </div>
       </div>
       {inspected && (
-        <div className="border-t border-border/70 px-4 py-3 text-xs">
+        <div ref={inspectorRef} className="border-t border-border/70 px-4 py-3 text-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <NodeIcon kind={inspected.kind} className="size-3.5 text-muted-foreground" />
               <span className="font-semibold">{inspected.label}</span>
             </div>
-            <button type="button" onClick={() => setInspected(null)} className="text-muted-foreground hover:text-foreground">
-              <X className="size-3.5" />
-            </button>
+            <div className="flex items-center gap-3">
+              {inspected.content && (
+                <button
+                  type="button"
+                  onClick={() => setViewingNode(inspected)}
+                  className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                >
+                  <FileText className="size-3.5" />
+                  View document
+                </button>
+              )}
+              <button type="button" onClick={() => setInspected(null)} className="text-muted-foreground hover:text-foreground">
+                <X className="size-3.5" />
+              </button>
+            </div>
           </div>
 
           <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
             <dt>Type</dt>
             <dd>{inspected.kind}</dd>
-            {inspected.source && (
-              <>
-                <dt>Source</dt>
-                <dd>{inspected.source}</dd>
-              </>
-            )}
-            {inspected.timestamp && (
-              <>
-                <dt>Timestamp</dt>
-                <dd>{inspected.timestamp}</dd>
-              </>
-            )}
             {trace.edges
               .filter((e) => e.to === inspected.id && e.reason)
               .map((e) => (
@@ -238,19 +248,50 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
               </div>
             ))}
 
-          {inspected.url && (
-            <a
-              href={inspected.url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 flex items-center gap-1 text-primary hover:underline"
-            >
-              <ExternalLink className="size-3" />
-              Open source
-            </a>
-          )}
+          {/* Every raw property on the node, exact key names — the point is that
+              a claim like "assigned on March 5" can be checked against what the
+              graph actually records (e.g. `created_at`), not a paraphrase of it. */}
+          {(() => {
+            const hidden = new Set(["content", "text", "body", "description"])
+            const entries = Object.entries(inspected.properties ?? {}).filter(([k, v]) => !hidden.has(k) && v !== "")
+            if (entries.length === 0) return null
+            return (
+              <dl className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-border/50 pt-2.5 text-muted-foreground">
+                {entries.map(([key, value]) => (
+                  <React.Fragment key={key}>
+                    <dt className="font-mono text-[10px]">{key}</dt>
+                    <dd className="truncate text-foreground">{String(value)}</dd>
+                  </React.Fragment>
+                ))}
+              </dl>
+            )
+          })()}
         </div>
       )}
+      <Dialog.Root open={!!viewingNode} onOpenChange={(open) => !open && setViewingNode(null)}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+          <Dialog.Popup className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-card shadow-xl outline-none">
+            <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
+              <div className="flex items-center gap-2">
+                <NodeIcon kind={viewingNode?.kind ?? ""} className="size-4 text-muted-foreground" />
+                <div>
+                  <Dialog.Title className="text-sm font-semibold">{viewingNode?.label}</Dialog.Title>
+                  {viewingNode?.subtitle && (
+                    <div className="text-xs text-muted-foreground">{viewingNode.subtitle}</div>
+                  )}
+                </div>
+              </div>
+              <Dialog.Close className="text-muted-foreground hover:text-foreground">
+                <X className="size-4" />
+              </Dialog.Close>
+            </div>
+            <div className="overflow-y-auto px-5 py-4">
+              <Markdown className="text-[0.85rem]">{viewingNode?.content ?? ""}</Markdown>
+            </div>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }

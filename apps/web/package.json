@@ -16,6 +16,7 @@
     "@workspace/retrieval": "workspace:*",
     "@workspace/graph-schema": "workspace:*",
     "@base-ui/react": "^1.7.0",
+    "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
     "lucide-react": "^1.33.0",
     "motion": "^12.23.24",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "dotenv": "^17.2.3",
     "@types/react": "^19",

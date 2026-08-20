@@ -1,6 +1,7 @@
 import { getNodeById, listNodesByLabel, runQueryHttp, singleSourcePaths, unwrapValue, type GraphPath } from "@workspace/graph-client"
 import { findNodeLabel, type GraphSchema } from "@workspace/graph-schema"
 
+import { searchCandidatesByLabel } from "./content-search"
 import { describeSchema } from "./schema-context"
 import { callStructured } from "./llm"
 import type { EntityResolution, ResolvedNode } from "./types"
@@ -98,10 +99,25 @@ export async function planQuery(question: string, schema: GraphSchema): Promise<
   })
 }
 
+/**
+ * An unfiltered `LIMIT 50` scan of a label is fine when that label has a few
+ * dozen rows total (every real candidate is in it) but useless once a label
+ * has tens/hundreds of thousands (the real match is very unlikely to land in
+ * an arbitrary unordered 50-row slice) — so semantic search against the
+ * mention text runs first and does the real work at any corpus size; the
+ * label scan stays only as a supplement for small/cold-index cases.
+ */
 async function gatherCandidatePool(mention: { text: string; likelyLabels: string[] }, schema: GraphSchema): Promise<CandidatePool> {
   const labels = mention.likelyLabels.filter((l) => findNodeLabel(schema, l))
+  const searchLabels = labels.length > 0 ? labels : schema.nodeLabels.map((n) => n.label)
   const seen = new Map<number, ResolvedNode>()
-  for (const label of labels.length > 0 ? labels : schema.nodeLabels.map((n) => n.label)) {
+
+  const semantic = await searchCandidatesByLabel(mention.text, searchLabels, schema, 20)
+  for (const node of semantic) {
+    if (!seen.has(node.id)) seen.set(node.id, node)
+  }
+
+  for (const label of searchLabels) {
     const schemaEntry = findNodeLabel(schema, label)
     const spec = listNodesByLabel(label, 50, schemaEntry)
     const rows = await runQueryHttp(spec.query, spec.params)

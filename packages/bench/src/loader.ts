@@ -52,8 +52,8 @@ export function loadRawDocs(dataDir: string): RawDoc[] {
   return docs
 }
 
-export function loadQuestions(dataDir: string): BenchQuestion[] {
-  const path = join(dataDir, "questions.sample.jsonl")
+export function loadQuestions(dataDir: string, filename = "questions.sample.jsonl"): BenchQuestion[] {
+  const path = join(dataDir, filename)
   return readFileSync(path, "utf-8")
     .split("\n")
     .filter((line) => line.trim().length > 0)

@@ -15,21 +15,8 @@ function subtitleFor(node: PipelineNode): string | undefined {
   return typeof value === "string" ? value : undefined
 }
 
-function timestampFor(node: PipelineNode): string | undefined {
-  for (const key of ["decided_at", "sent_at", "created_at", "updated_at"]) {
-    const value = node.properties[key]
-    if (typeof value === "string" && value) return value
-  }
-  return undefined
-}
-
 function contentFor(node: PipelineNode): string | undefined {
   const value = node.properties.content ?? node.properties.text ?? node.properties.body ?? node.properties.description
-  return typeof value === "string" && value ? value : undefined
-}
-
-function urlFor(node: PipelineNode): string | undefined {
-  const value = node.properties.url
   return typeof value === "string" && value ? value : undefined
 }
 
@@ -40,10 +27,8 @@ function toUiResult(result: AnswerResult): ChatTurnResult {
     kind: n.label,
     role: n.role,
     subtitle: subtitleFor(n),
-    source: typeof n.properties.source === "string" ? n.properties.source : undefined,
-    timestamp: timestampFor(n),
     content: contentFor(n),
-    url: urlFor(n),
+    properties: n.properties,
   }))
 
   const edges: TraceEdge[] = result.edges.map((e) => ({
