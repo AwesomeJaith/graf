@@ -103,9 +103,14 @@ two model ids in `.env.example`.
 ### 3. Load data
 
 ```bash
-pnpm run seed:demo      # hand-authored demo graph (Sam/Atlas ambiguity, conflicting launch dates, temporal ownership)
 pnpm run bench:ingest   # EnterpriseRAG-Bench sample slice (packages/bench/data) — optional, for the eval harness
+pnpm run seed:demo      # hand-authored demo graph (Sam/Atlas ambiguity, conflicting launch dates, temporal ownership)
 ```
+
+Run `bench:ingest` before `seed:demo`, not after: both write to the same shared
+embedding sidecar, but `bench:ingest` rebuilds that file from scratch while
+`seed:demo` merges into whatever's already there — reversing the order wipes
+the demo graph's embeddings out of it.
 
 ### 4. Run the app
 

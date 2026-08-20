@@ -37,7 +37,12 @@ export async function searchContent(question: string, schema: GraphSchema, topK 
     return []
   }
 
-  const matches = index.search(queryVector, { topK })
+  // Below ~0.4 cosine, matches are coincidental (a shared word, a name
+  // fragment) rather than genuinely relevant — without a floor, every
+  // question pulls in a handful of unrelated nodes and their traversal
+  // neighborhoods, burying the real answer under noise in the trace.
+  const SIMILARITY_FLOOR = 0.4
+  const matches = index.search(queryVector, { topK }).filter((m) => m.score >= SIMILARITY_FLOOR)
   const results: ResolvedNode[] = []
   for (const match of matches) {
     const schemaEntry = findNodeLabel(schema, match.label)
