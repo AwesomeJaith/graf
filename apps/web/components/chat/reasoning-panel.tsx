@@ -4,7 +4,7 @@ import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
 import { ChevronRight } from "lucide-react"
 
-import { cn } from "@workspace/ui/lib/utils"
+import { Markdown } from "./markdown"
 
 export function ReasoningPanel({ reasoning, defaultExpanded }: { reasoning: string; defaultExpanded: boolean }) {
   const [expanded, setExpanded] = React.useState(defaultExpanded)
@@ -33,7 +33,7 @@ export function ReasoningPanel({ reasoning, defaultExpanded }: { reasoning: stri
             transition={{ type: "spring", stiffness: 500, damping: 45 }}
             className="overflow-hidden"
           >
-            <p className={cn("px-3 pb-3 text-xs leading-relaxed text-muted-foreground")}>{reasoning}</p>
+            <Markdown className="px-3 pb-3 text-xs leading-relaxed text-muted-foreground">{reasoning}</Markdown>
           </motion.div>
         )}
       </AnimatePresence>

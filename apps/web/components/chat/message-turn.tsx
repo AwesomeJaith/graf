@@ -7,13 +7,16 @@ import { Avatar } from "@workspace/ui/components/avatar"
 import type { AnswerClaim, ChatMessage } from "@/lib/trace-types"
 import { ClaimAnswer } from "./claim-answer"
 import { EvidencePanel } from "./evidence-panel"
+import { MentionText } from "./mention-text"
 import { ReasoningPanel } from "./reasoning-panel"
 import { StageTicker } from "./stage-ticker"
 
 export function UserTurn({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end gap-3">
-      <div className="max-w-[70%] rounded-xl bg-card px-3.5 py-2.5 text-sm">{message.text}</div>
+      <div className="max-w-[70%] rounded-xl bg-card px-3.5 py-2.5 text-sm">
+        <MentionText text={message.text} />
+      </div>
     </div>
   )
 }
@@ -38,8 +41,6 @@ export function AssistantTurn({
 
         {result && (
           <>
-            {result.reasoning && <ReasoningPanel reasoning={result.reasoning} defaultExpanded={showReasoningByDefault} />}
-
             {result.notFound ? (
               <p className="flex items-start gap-2 text-[0.9rem] leading-relaxed text-foreground">
                 <SearchX className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -53,6 +54,8 @@ export function AssistantTurn({
                 onClaimClick={(c) => setActiveClaim((cur) => (cur?.id === c.id ? null : c))}
               />
             )}
+
+            {result.reasoning && <ReasoningPanel reasoning={result.reasoning} defaultExpanded={showReasoningByDefault} />}
 
             <EvidencePanel
               entityResolutions={result.entityResolutions}

@@ -27,13 +27,25 @@ interface ChatInputProps {
   disabled?: boolean
 }
 
-/** Finds an in-progress "@mention" ending at the cursor, e.g. "...cc @sam" -> { start: 4, query: "sam" }. */
+/**
+ * Finds an in-progress "@mention" ending at the cursor. Two forms:
+ *  - bare: "...cc @sam" -> stops at the first whitespace (single word).
+ *  - bracketed: "...cc @[atlas launch decision]" -> anything up to the
+ *    closing "]" (or the cursor, if not closed yet) — lets a phrase with
+ *    spaces drive the same semantic search instead of only matching one word.
+ */
 function findMentionAtCursor(text: string, cursor: number): { start: number; query: string } | null {
   const upToCursor = text.slice(0, cursor)
+
+  const bracketAt = upToCursor.lastIndexOf("@[")
+  if (bracketAt !== -1 && !upToCursor.slice(bracketAt + 2).includes("]")) {
+    return { start: bracketAt, query: upToCursor.slice(bracketAt + 2) }
+  }
+
   const at = upToCursor.lastIndexOf("@")
   if (at === -1) return null
   const query = upToCursor.slice(at + 1)
-  if (/\s/.test(query)) return null // the "@" belongs to an already-finished token
+  if (query.startsWith("[") || /\s/.test(query)) return null // bracketed-but-closed, or a finished bare token
   const charBefore = at > 0 ? upToCursor[at - 1] : " "
   if (charBefore && !/\s/.test(charBefore)) return null // "foo@bar", not a mention
   return { start: at, query }
@@ -77,11 +89,16 @@ export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputP
     const el = textareaRef.current
     if (!mention || !el) return
     const cursor = el.selectionStart ?? value.length
-    const next = `${value.slice(0, mention.start)}@${candidate.name} ${value.slice(cursor)}`
+    // Always insert the bracketed form, even for a bare "@sam" trigger — a
+    // plain "@Full Name " can't be told apart from "@Full" followed by the
+    // next word, but "@[Full Name]" is unambiguous and is what the message
+    // renderer looks for to draw the mention as a badge.
+    const inserted = `@[${candidate.name}]`
+    const next = `${value.slice(0, mention.start)}${inserted} ${value.slice(cursor)}`
     setValue(next)
     setMention(null)
     requestAnimationFrame(() => {
-      const pos = mention.start + candidate.name.length + 2
+      const pos = mention.start + inserted.length + 1
       el.focus()
       el.setSelectionRange(pos, pos)
     })
@@ -103,7 +120,7 @@ export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputP
         ref={textareaRef}
         value={value}
         rows={1}
-        placeholder="Ask about your organization… (@ to mention someone or something)"
+        placeholder="Ask about your organization… (@ to mention, @[a longer phrase] to search)"
         onChange={(e) => {
           setValue(e.target.value)
           resize(e.target)
