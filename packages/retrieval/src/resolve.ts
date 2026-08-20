@@ -117,10 +117,25 @@ async function gatherCandidatePool(mention: { text: string; likelyLabels: string
     if (!seen.has(node.id)) seen.set(node.id, node)
   }
 
-  for (const label of searchLabels) {
-    const schemaEntry = findNodeLabel(schema, label)
-    const spec = listNodesByLabel(label, 50, schemaEntry)
-    const rows = await runGraphQuery(spec.query, spec.params)
+  // One round trip per label, issued together rather than awaited in series.
+  // A mention the planner couldn't type falls back to *every* schema label, so
+  // in series this was ~10 sequential cloud round trips per mention and the
+  // single largest cost in the whole pipeline (58% of a 36s question — more
+  // than synthesis and traversal combined). Ordering doesn't matter: results
+  // land in an id-keyed map that already ignores duplicates.
+  const scans = await Promise.all(
+    searchLabels.map(async (label) => {
+      const schemaEntry = findNodeLabel(schema, label)
+      const spec = listNodesByLabel(label, 50, schemaEntry)
+      try {
+        return { label, rows: await runGraphQuery(spec.query, spec.params) }
+      } catch {
+        return { label, rows: [] }
+      }
+    })
+  )
+
+  for (const { label, rows } of scans) {
     for (const row of rows) {
       const id = row.id as number
       if (seen.has(id)) continue
