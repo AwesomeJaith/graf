@@ -129,6 +129,23 @@
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
     }
+  html {
+    scrollbar-color: var(--border) var(--background);
+    }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+    }
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+    }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+    }
 }
 
 @keyframes shimmer {

@@ -3,12 +3,15 @@
 import * as React from "react"
 
 import type { ChatMessage, ChatTurnResult, ResponseMode } from "@/lib/trace-types"
+import { useReasoningSetting } from "@/lib/use-reasoning-setting"
 import { ChatInput } from "@/components/chat/chat-input"
 import { UserTurn, AssistantTurn } from "@/components/chat/message-turn"
+import { SettingsMenu } from "@/components/chat/settings-menu"
 
 export default function Page() {
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [mode, setMode] = React.useState<ResponseMode>("normal")
+  const [showReasoningByDefault, setShowReasoningByDefault] = useReasoningSetting()
   const scrollRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
@@ -38,6 +41,7 @@ export default function Page() {
                 ...m,
                 pending: false,
                 result: {
+                  reasoning: "",
                   answer: err instanceof Error ? err.message : "Something went wrong answering that.",
                   claims: [],
                   trace: { nodes: [], edges: [] },
@@ -75,6 +79,7 @@ export default function Page() {
           <div className="size-2 rounded-[3px] bg-primary" />
           <span className="text-sm font-semibold">Graf</span>
         </div>
+        <SettingsMenu showReasoningByDefault={showReasoningByDefault} onShowReasoningByDefaultChange={setShowReasoningByDefault} />
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5">
@@ -92,6 +97,7 @@ export default function Page() {
                 key={m.id}
                 message={m}
                 onSelectEntity={(mention, candidateId, label) => handleSelectEntity(m.text, mention, candidateId, label)}
+                showReasoningByDefault={showReasoningByDefault}
               />
             )
           )}

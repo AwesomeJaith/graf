@@ -15,6 +15,7 @@
     "@workspace/ui": "workspace:*",
     "@workspace/retrieval": "workspace:*",
     "@workspace/graph-schema": "workspace:*",
+    "@base-ui/react": "^1.7.0",
     "class-variance-authority": "^0.7.1",
     "lucide-react": "^1.33.0",
     "motion": "^12.23.24",

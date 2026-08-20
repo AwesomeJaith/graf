@@ -74,6 +74,7 @@ export interface Conflict {
 export type ResponseMode = "concise" | "normal" | "verbose"
 
 export interface ChatTurnResult {
+  reasoning: string
   answer: string
   claims: AnswerClaim[]
   trace: Trace

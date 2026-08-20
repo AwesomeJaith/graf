@@ -10,6 +10,7 @@ const MODE_INSTRUCTIONS: Record<ResponseMode, string> = {
 }
 
 interface SynthesizeOutput {
+  reasoning: string
   answer: string
   claims: { text: string; supportingNodeIds: number[] }[]
   notFound: boolean
@@ -19,6 +20,11 @@ interface SynthesizeOutput {
 const SYNTHESIZE_SCHEMA = {
   type: "object",
   properties: {
+    reasoning: {
+      type: "string",
+      description:
+        "Your work, written out before the answer: which entities you're treating as resolved, which nodes/edges you actually used and why, how you weighed any conflicting or temporal evidence, and why the rest of the evidence didn't make the cut. Written for someone auditing the answer, not the person who asked the question.",
+    },
     answer: { type: "string" },
     claims: {
       type: "array",
@@ -50,10 +56,11 @@ const SYNTHESIZE_SCHEMA = {
       },
     },
   },
-  required: ["answer", "claims", "notFound", "conflictDescriptions"],
+  required: ["reasoning", "answer", "claims", "notFound", "conflictDescriptions"],
 }
 
 export interface SynthesizeResult {
+  reasoning: string
   answer: string
   claims: Claim[]
   notFound: boolean
@@ -118,6 +125,7 @@ export async function synthesizeAnswer(
     : []
 
   return {
+    reasoning: typeof out.reasoning === "string" ? out.reasoning : "",
     answer: out.answer,
     claims,
     notFound: Boolean(out.notFound),

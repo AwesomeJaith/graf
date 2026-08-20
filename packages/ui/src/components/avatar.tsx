@@ -29,80 +29,94 @@ function Avatar({ src, alt, size = DEFAULT_SIZE, className, style, ...props }: A
   )
 }
 
-// Deterministic per-name gradient identicon: three overlapping shapes,
-// hashed from the name, so the same person always renders the same avatar.
-const PALETTE = ["#D74C26", "#F0A26B", "#373737", "#8C8C8C"]
+// Deterministic per-name gradient identicon — same generator (hash, unit
+// spread, color pick, two overlapping blurred paths) and palette as the
+// /Users/noodles/Downloads/fallback-avatar reference, so the same name
+// always renders the same avatar. The outer <Avatar> root clips this to a
+// rounded square (not the reference's own circular mask), per the brief.
+const PALETTE = ["#F6C750", "#E63525", "#050D4C", "#D4EBEE"]
+const BASE = 40
 
-function hash(input: string) {
+function hash(name: string) {
   let h = 0
-  for (let i = 0; i < input.length; i++) {
-    h = (h << 5) - h + input.charCodeAt(i)
-    h |= 0
+  for (let i = 0; i < name.length; i++) {
+    const character = name.charCodeAt(i)
+    h = (h << 5) - h + character
+    h = h & h
   }
   return Math.abs(h)
 }
 
-function unit(seed: number, max: number, salt = 0) {
-  return ((seed * (salt + 7)) % 1000) / 1000 * max
+function getDigit(number: number, ntn: number) {
+  return Math.floor((number / Math.pow(10, ntn)) % 10)
 }
+
+function getUnit(number: number, range: number, index?: number) {
+  const value = number % range
+  if (index && getDigit(number, index) % 2 === 0) return -value
+  return value
+}
+
+function getRandomColor(number: number, colors: string[], range: number) {
+  return colors[number % range]!
+}
+
+function generateColors(name: string, colors: string[]) {
+  const numFromName = hash(name)
+  const range = colors.length
+  return Array.from({ length: 3 }, (_, i) => ({
+    color: getRandomColor(numFromName + i, colors, range),
+    translateX: getUnit(numFromName * (i + 1), BASE / 10, 1),
+    translateY: getUnit(numFromName * (i + 1), BASE / 10, 2),
+    scale: 1.2 + getUnit(numFromName * (i + 1), BASE / 20) / 10,
+    rotate: getUnit(numFromName * (i + 1), 360, 1),
+  }))
+}
+
+// The reference paths are authored against a canvas roughly this big
+// (coordinates run out to ~86); the artwork's viewBox is fixed to that
+// regardless of the rendered `size`, so `width`/`height` scale the whole
+// pattern down to fit instead of cropping it into a near-solid tile at
+// chat-avatar sizes.
+const CANVAS = 90
 
 function AvatarGradient({ name, size }: { name: string; size: number }) {
-  const seed = hash(name || "?")
+  const titleId = React.useId()
   const maskId = React.useId()
-  const initials = React.useMemo(() => getInitials(name), [name])
-
-  const shapes = [1, 2].map((i) => ({
-    color: PALETTE[(seed + i) % PALETTE.length],
-    translateX: unit(seed, size / 6, i) - size / 12,
-    translateY: unit(seed, size / 6, i + 3) - size / 12,
-    rotate: unit(seed, 360, i * 2),
-    scale: 1.1 + unit(seed, 0.5, i),
-  }))
+  const filterId = React.useId()
+  const properties = React.useMemo(() => generateColors(name || "?", PALETTE), [name])
 
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label={name}>
-      <defs>
-        <mask id={maskId}>
-          <rect width={size} height={size} rx={size * 0.28} fill="#fff" />
-        </mask>
-      </defs>
+    <svg viewBox={`0 0 ${CANVAS} ${CANVAS}`} width={size} height={size} fill="none" role="img" aria-describedby={titleId}>
+      <title id={titleId}>{name}</title>
+      <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={CANVAS} height={CANVAS}>
+        <rect width={CANVAS} height={CANVAS} fill="#fff" />
+      </mask>
       <g mask={`url(#${maskId})`}>
-        <rect width={size} height={size} fill="#373737" />
-        {shapes.map((s, i) => (
-          <rect
-            key={i}
-            x={size * 0.15}
-            y={size * 0.15}
-            width={size * 0.7}
-            height={size * 0.7}
-            fill={s.color}
-            opacity={0.85}
-            style={{ mixBlendMode: i === 0 ? "normal" : "overlay" }}
-            transform={`translate(${s.translateX} ${s.translateY}) rotate(${s.rotate} ${size / 2} ${size / 2}) scale(${s.scale})`}
-          />
-        ))}
-        <text
-          x="50%"
-          y="52%"
-          dominantBaseline="middle"
-          textAnchor="middle"
-          fill="#fff"
-          fontSize={size * 0.36}
-          fontWeight={600}
+        <rect width={CANVAS} height={CANVAS} fill={properties[0]!.color} />
+        <path
+          filter={`url(#${filterId})`}
+          d="M32.414 59.35L50.376 70.5H72.5v-71H33.728L26.5 13.381l19.057 27.08L32.414 59.35z"
+          fill={properties[1]!.color}
+          transform={`translate(${properties[1]!.translateX} ${properties[1]!.translateY}) rotate(${properties[1]!.rotate} ${CANVAS / 2} ${CANVAS / 2}) scale(${properties[1]!.scale})`}
+        />
+        <path
+          filter={`url(#${filterId})`}
           style={{ mixBlendMode: "overlay" }}
-        >
-          {initials}
-        </text>
+          d="M22.216 24L0 46.75l14.108 38.129L78 86l-3.081-59.276-22.378 4.005 12.972 20.186-23.35 27.395L22.215 24z"
+          fill={properties[2]!.color}
+          transform={`translate(${properties[2]!.translateX} ${properties[2]!.translateY}) rotate(${properties[2]!.rotate} ${CANVAS / 2} ${CANVAS / 2}) scale(${properties[2]!.scale})`}
+        />
       </g>
+      <defs>
+        <filter id={filterId} filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+          <feFlood floodOpacity={0} result="BackgroundImageFix" />
+          <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+          <feGaussianBlur stdDeviation={7} result="effect1_foregroundBlur" />
+        </filter>
+      </defs>
     </svg>
   )
-}
-
-function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return "?"
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
-  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
 }
 
 export { Avatar }

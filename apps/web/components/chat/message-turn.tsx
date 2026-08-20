@@ -9,6 +9,7 @@ import { ClaimAnswer } from "./claim-answer"
 import { ConflictCard } from "./conflict-card"
 import { EntityResolutionPanel } from "./entity-resolution"
 import { GraphTrace } from "../graph/graph-trace"
+import { ReasoningPanel } from "./reasoning-panel"
 import { StageTicker } from "./stage-ticker"
 
 export function UserTurn({ message }: { message: ChatMessage }) {
@@ -22,9 +23,11 @@ export function UserTurn({ message }: { message: ChatMessage }) {
 export function AssistantTurn({
   message,
   onSelectEntity,
+  showReasoningByDefault = true,
 }: {
   message: ChatMessage
   onSelectEntity?: (mention: string, candidateId: string, label: string) => void
+  showReasoningByDefault?: boolean
 }) {
   const [activeClaim, setActiveClaim] = React.useState<AnswerClaim | null>(null)
   const result = message.result
@@ -40,6 +43,8 @@ export function AssistantTurn({
             {result.entityResolutions.length > 0 && (
               <EntityResolutionPanel resolutions={result.entityResolutions} onSelect={onSelectEntity} />
             )}
+
+            {result.reasoning && <ReasoningPanel reasoning={result.reasoning} defaultExpanded={showReasoningByDefault} />}
 
             {result.notFound ? (
               <p className="text-sm text-muted-foreground italic">{result.answer}</p>

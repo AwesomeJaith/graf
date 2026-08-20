@@ -62,6 +62,7 @@ export interface AnswerResult {
   nodes: TraceNode[]
   edges: TraceEdge[]
   conflicts: Conflict[]
+  reasoning: string
   answer: string
   claims: Claim[]
   notFound: boolean

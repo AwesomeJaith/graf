@@ -78,6 +78,7 @@ function toUiResult(result: AnswerResult): ChatTurnResult {
   }))
 
   return {
+    reasoning: result.reasoning,
     answer: result.answer,
     claims,
     trace,
