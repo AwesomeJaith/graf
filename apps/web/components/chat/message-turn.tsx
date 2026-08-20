@@ -1,14 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { motion } from "motion/react"
+import { SearchX } from "lucide-react"
 
 import { Avatar } from "@workspace/ui/components/avatar"
 import type { AnswerClaim, ChatMessage } from "@/lib/trace-types"
 import { ClaimAnswer } from "./claim-answer"
-import { ConflictCard } from "./conflict-card"
-import { EntityResolutionPanel } from "./entity-resolution"
-import { GraphTrace } from "../graph/graph-trace"
+import { EvidencePanel } from "./evidence-panel"
 import { ReasoningPanel } from "./reasoning-panel"
 import { StageTicker } from "./stage-ticker"
 
@@ -40,14 +38,13 @@ export function AssistantTurn({
 
         {result && (
           <>
-            {result.entityResolutions.length > 0 && (
-              <EntityResolutionPanel resolutions={result.entityResolutions} onSelect={onSelectEntity} />
-            )}
-
             {result.reasoning && <ReasoningPanel reasoning={result.reasoning} defaultExpanded={showReasoningByDefault} />}
 
             {result.notFound ? (
-              <p className="text-sm text-muted-foreground italic">{result.answer}</p>
+              <p className="flex items-start gap-2 text-[0.9rem] leading-relaxed text-foreground">
+                <SearchX className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span>{result.answer}</span>
+              </p>
             ) : (
               <ClaimAnswer
                 answer={result.answer}
@@ -57,22 +54,15 @@ export function AssistantTurn({
               />
             )}
 
-            {result.conflicts.map((conflict) => (
-              <ConflictCard key={conflict.id} conflict={conflict} />
-            ))}
-
-            {result.trace.nodes.length > 0 && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
-                <div className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                  Knowledge trace
-                </div>
-                <GraphTrace
-                  trace={result.trace}
-                  highlightedNodeIds={activeClaim?.supportingNodeIds ?? null}
-                  highlightedEdgeIds={activeClaim?.supportingEdgeIds ?? null}
-                />
-              </motion.div>
-            )}
+            <EvidencePanel
+              entityResolutions={result.entityResolutions}
+              conflicts={result.conflicts}
+              trace={result.trace}
+              onSelectEntity={onSelectEntity}
+              highlightedNodeIds={activeClaim?.supportingNodeIds ?? null}
+              highlightedEdgeIds={activeClaim?.supportingEdgeIds ?? null}
+              forceExpand={!!activeClaim}
+            />
           </>
         )}
       </div>

@@ -97,7 +97,7 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
           <div
             key={p.id}
             className={cn(
-              "absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-background px-1.5 py-0.5 text-[10px] whitespace-nowrap",
+              "absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-background px-2.5 py-1 text-[11px] font-medium whitespace-nowrap",
               p.active ? "border-primary/30 text-primary" : "border-border text-muted-foreground/70"
             )}
             style={{ left: p.midX, top: p.midY }}
@@ -105,9 +105,9 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
             {p.label}
           </div>
         ))}
-        <div className="relative flex items-start gap-10">
+        <div className="relative flex items-start gap-24">
           {columns.map((col, ci) => (
-            <div key={ci} className="flex flex-col gap-4">
+            <div key={ci} className="flex flex-col gap-8">
               {col.map((node) => {
                 const isDim = dimmed(node.id)
                 return (

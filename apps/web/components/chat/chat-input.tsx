@@ -4,7 +4,7 @@ import * as React from "react"
 import { ArrowUp } from "lucide-react"
 
 import type { ResponseMode } from "@/lib/trace-types"
-import { cn } from "@workspace/ui/lib/utils"
+import { Button } from "@workspace/ui/components/button"
 
 const MODES: { key: ResponseMode; label: string }[] = [
   { key: "concise", label: "Concise" },
@@ -54,27 +54,21 @@ export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputP
       <div className="flex items-center justify-between px-1 pt-1">
         <div className="flex items-center gap-1 rounded-md bg-muted p-0.5">
           {MODES.map((m) => (
-            <button
+            <Button
               key={m.key}
               type="button"
+              size="sm"
+              variant={mode === m.key ? "secondary" : "ghost"}
+              aria-pressed={mode === m.key}
               onClick={() => onModeChange(m.key)}
-              className={cn(
-                "rounded-[5px] px-2 py-1 text-xs font-medium transition-colors",
-                mode === m.key ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"
-              )}
             >
               {m.label}
-            </button>
+            </Button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={submit}
-          disabled={disabled || !value.trim()}
-          className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-30"
-        >
-          <ArrowUp className="size-4" />
-        </button>
+        <Button type="button" size="icon" onClick={submit} disabled={disabled || !value.trim()} aria-label="Send">
+          <ArrowUp />
+        </Button>
       </div>
     </div>
   )
