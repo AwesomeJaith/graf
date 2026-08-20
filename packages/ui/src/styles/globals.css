@@ -75,6 +75,32 @@
     --chart-4: #6b6b6b;
     --chart-5: #444444;
     --radius: 0.5rem;
+    /* Brand gradient, taken from the logo. The mark isn't a CSS gradient —
+       it's the deterministic SVG identicon in components/avatar.tsx, whose
+       three layers for the name "Graf" resolve to exactly these palette
+       entries in this order. Hoisted into variables so the switch, the send
+       button and the shimmer share one definition with the logo instead of
+       three hand-copied colour lists that drift the moment the mark changes. */
+    --brand-1: #f6c750;
+    --brand-2: #e63525;
+    --brand-3: #050d4c;
+    /* Diagonal to echo the identicon's angled blobs. brand-2 sits near the
+       middle so a centred icon lands on the red rather than on either
+       extreme, where a light glyph would wash out or a dark one vanish. */
+    --brand-gradient: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 55%, var(--brand-3) 100%);
+    /* Sweep variant for animated text. Palindromic on purpose: the shimmer
+       animates background-position across a 200%-wide box, so the two edges
+       have to be the same colour or the loop visibly jumps on repeat. brand-3
+       is kept to a narrow mid band because at #050d4c on this background it
+       reads as a hole in the text rather than a sheen if given real width. */
+    --brand-gradient-sweep: linear-gradient(
+        90deg,
+        var(--brand-1) 0%,
+        var(--brand-2) 35%,
+        var(--brand-3) 50%,
+        var(--brand-2) 65%,
+        var(--brand-1) 100%
+    );
     --sidebar: #262626;
     --sidebar-foreground: #ededed;
     --sidebar-primary: #d74c26;

@@ -9,7 +9,7 @@ export function ShimmerText({ children, className }: { children: React.ReactNode
     <span
       className={cn(
         "bg-[length:200%_100%] bg-clip-text text-transparent [animation:shimmer_1.6s_linear_infinite]",
-        "bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground",
+        "bg-[image:var(--brand-gradient-sweep)]",
         className
       )}
     >

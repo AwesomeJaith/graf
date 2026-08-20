@@ -171,7 +171,18 @@ export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputP
             </Button>
           ))}
         </div>
-        <Button type="button" size="icon" onClick={submit} disabled={disabled || !value.trim()} aria-label="Send">
+        {/* Brand gradient fill rather than the flat `bg-primary` the default
+            variant gives. The variant's `hover:bg-primary/80` can't show
+            through an opaque background-image, so the hover affordance becomes
+            brightness instead of colour (`transition-all` already animates it). */}
+        <Button
+          type="button"
+          size="icon"
+          onClick={submit}
+          disabled={disabled || !value.trim()}
+          aria-label="Send"
+          className="bg-[image:var(--brand-gradient)] hover:brightness-110"
+        >
           <ArrowUp />
         </Button>
       </div>
