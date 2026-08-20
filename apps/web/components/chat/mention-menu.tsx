@@ -33,7 +33,7 @@ export function MentionMenu({
           <NodeIcon kind={c.label} className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate font-medium">{c.name}</span>
           {c.subtitle && <span className="truncate text-muted-foreground">{c.subtitle}</span>}
-          <span className="ml-auto shrink-0 text-[10px] tracking-wide text-muted-foreground/70 uppercase">{c.label}</span>
+          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/70">{c.label}</span>
         </button>
       ))}
     </div>

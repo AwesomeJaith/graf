@@ -83,7 +83,7 @@ export function EvidencePanel({
               ))}
               {trace.nodes.length > 0 && (
                 <div>
-                  <div className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Knowledge trace</div>
+                  <div className="mb-2 text-xs font-semibold text-muted-foreground">Knowledge trace</div>
                   <GraphTrace
                     trace={trace}
                     highlightedNodeIds={highlightedNodeIds}

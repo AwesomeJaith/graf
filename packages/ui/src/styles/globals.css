@@ -106,6 +106,19 @@
         var(--brand-1) 50%,
         var(--brand-2) 100%
     );
+    /* Translucent variant for chips drawn *on top of* content — the mention
+       badge inside a message bubble. Letting the bubble show through is what
+       makes it read as text that's been highlighted rather than as a button
+       sitting on the message. Red arrives earlier than in the opaque gradient
+       (55% instead of 70%) because a badge is a wide, short box: at 135deg the
+       yellow end lands under the first couple of characters, and it's the
+       lightest stop, so white text over it is the weakest contrast in the
+       whole gradient. */
+    --brand-gradient-soft: linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--brand-1) 80%, transparent) 0%,
+        color-mix(in oklab, var(--brand-2) 80%, transparent) 55%
+    );
     --sidebar: #262626;
     --sidebar-foreground: #ededed;
     --sidebar-primary: #d74c26;

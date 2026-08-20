@@ -10,9 +10,24 @@ interface ChatRequestBody {
   overrides?: { mention: string; candidateId: number; label: string }[]
 }
 
+/**
+ * A second line for the node card, when there's a *different* one to show.
+ *
+ * The label is already the node's `primaryText`, and for most labels the first
+ * candidate here is the property that primaryText was taken from — Person.name
+ * and Document.title are the same string — so an unguarded pick renders every
+ * card with its own title twice. Fall through to the next candidate instead of
+ * repeating, and give up rather than showing a duplicate.
+ */
 function subtitleFor(node: PipelineNode): string | undefined {
-  const value = node.properties.title ?? node.properties.name ?? node.properties.summary ?? node.properties.status
-  return typeof value === "string" ? value : undefined
+  const normalize = (value: string) => value.trim().toLowerCase()
+  const candidates = [node.properties.title, node.properties.name, node.properties.summary, node.properties.status]
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.trim() === "") continue
+    if (normalize(candidate) === normalize(node.primaryText)) continue
+    return candidate
+  }
+  return undefined
 }
 
 function contentFor(node: PipelineNode): string | undefined {

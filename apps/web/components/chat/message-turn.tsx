@@ -14,7 +14,11 @@ import { StageTicker } from "./stage-ticker"
 export function UserTurn({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end gap-3">
-      <div className="max-w-[70%] rounded-xl bg-card px-3.5 py-2.5 text-sm">
+      {/* Uniform inset, not the usual wider-than-tall pair: the mention badges
+          inside are inline boxes that can touch any edge, so an even inset is
+          what makes their surrounding gap even, and it's the term the badge's
+          own radius is derived from (see <MentionText>). */}
+      <div className="max-w-[70%] rounded-2xl bg-card p-2.5 text-sm">
         <MentionText text={message.text} />
       </div>
     </div>

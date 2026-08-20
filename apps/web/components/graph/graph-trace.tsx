@@ -8,10 +8,11 @@ import { FileText, X } from "lucide-react"
 
 import type { Trace, TraceNode } from "@/lib/trace-types"
 import { cn } from "@workspace/ui/lib/utils"
-import { Markdown } from "../chat/markdown"
+import { ContentView } from "../content/content-view"
 import { NodeIcon } from "./node-icon"
 
-const MESSAGE_KINDS = new Set(["Message"])
+/** How much of a node's body the inspector previews before deferring to the viewer. */
+const PREVIEW_MAX_HEIGHT = 200
 
 interface GraphTraceProps {
   trace: Trace
@@ -27,7 +28,16 @@ interface EdgePath {
   midY: number
   label: string
   active: boolean
+  showLabel: boolean
 }
+
+/**
+ * Grid size, in px, for thinning out edge labels. A column pair joined by a
+ * dozen `AUTHORED` edges puts a dozen identical pills at almost the same
+ * midpoint, which stacks into an illegible blob — one label per cell keeps the
+ * relationship type readable without claiming to annotate every edge.
+ */
+const LABEL_CELL = 34
 
 // Groups nodes into columns by hop-distance from the resolved entities, then
 // measures the real rendered DOM positions to draw connecting edges. The
@@ -36,6 +46,7 @@ interface EdgePath {
 export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNodeClick }: GraphTraceProps) {
   const columns = React.useMemo(() => layoutColumns(trace), [trace])
   const containerRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
   const inspectorRef = React.useRef<HTMLDivElement>(null)
   const nodeRefs = React.useRef(new Map<string, HTMLDivElement>())
   const [edgePaths, setEdgePaths] = React.useState<EdgePath[]>([])
@@ -50,37 +61,84 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
   }, [inspected])
 
   const measure = React.useCallback(() => {
-    const container = containerRef.current
-    if (!container) return
-    const containerRect = container.getBoundingClientRect()
+    // Measured against the content wrapper, not the scroll container: the
+    // wrapper grows to the full width/height of the columns, so these
+    // coordinates stay valid when the graph is panned. Using the container's
+    // rect made every coordinate relative to the *visible* box instead.
+    const content = contentRef.current
+    if (!content) return
+    const origin = content.getBoundingClientRect()
     const paths: EdgePath[] = []
+
     for (const edge of trace.edges) {
       const from = nodeRefs.current.get(edge.from)
       const to = nodeRefs.current.get(edge.to)
       if (!from || !to) continue
       const fr = from.getBoundingClientRect()
       const tr = to.getBoundingClientRect()
-      const x1 = fr.right - containerRect.left
-      const y1 = fr.top + fr.height / 2 - containerRect.top
-      const x2 = tr.left - containerRect.left
-      const y2 = tr.top + tr.height / 2 - containerRect.top
-      const midX = (x1 + x2) / 2
+
+      // Which sides to join. Always leaving the right edge and arriving at the
+      // left assumes the target sits in a later column, and an edge pointing
+      // back at an earlier one then had to double back across its own source
+      // card — the tangle of hairpins in the top-left of the graph. Pick the
+      // facing sides instead, and join vertically when the two share a column.
+      const forwardGap = tr.left - fr.right
+      const backwardGap = fr.left - tr.right
+      let x1: number, y1: number, x2: number, y2: number, d: string
+
+      if (forwardGap > 8 || backwardGap > 8) {
+        const forward = forwardGap > 8
+        x1 = (forward ? fr.right : fr.left) - origin.left
+        x2 = (forward ? tr.left : tr.right) - origin.left
+        y1 = fr.top + fr.height / 2 - origin.top
+        y2 = tr.top + tr.height / 2 - origin.top
+        const midX = (x1 + x2) / 2
+        d = `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`
+      } else {
+        const downward = tr.top >= fr.top
+        x1 = fr.left + fr.width / 2 - origin.left
+        x2 = tr.left + tr.width / 2 - origin.left
+        y1 = (downward ? fr.bottom : fr.top) - origin.top
+        y2 = (downward ? tr.top : tr.bottom) - origin.top
+        const midY = (y1 + y2) / 2
+        d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`
+      }
+
       paths.push({
         id: edge.id,
-        d: `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`,
-        midX,
+        d,
+        // Both curve forms above are symmetric, so the point at t=0.5 is exactly
+        // the average of the endpoints — the label sits on the line, not near it.
+        midX: (x1 + x2) / 2,
         midY: (y1 + y2) / 2,
         label: edge.type.replace(/_/g, " ").toLowerCase(),
         active: !highlightedEdgeIds || highlightedEdgeIds.includes(edge.id),
+        showLabel: false,
       })
     }
+
+    // Thin the labels down to one per grid cell, letting highlighted edges
+    // claim their cell first so a label is never spent on a dimmed edge while
+    // the edge the answer actually cites goes unlabelled.
+    const taken = new Set<string>()
+    for (const path of [...paths].sort((a, b) => Number(b.active) - Number(a.active))) {
+      const cell = `${Math.round(path.midX / LABEL_CELL)}:${Math.round(path.midY / LABEL_CELL)}`
+      if (taken.has(cell)) continue
+      taken.add(cell)
+      path.showLabel = true
+    }
+
     setEdgePaths(paths)
   }, [trace, highlightedEdgeIds])
 
   React.useLayoutEffect(() => {
     measure()
+    // Both boxes matter: the container changes when the panel resizes, and the
+    // content wrapper when the columns themselves reflow (which moves every
+    // endpoint without the container changing size at all).
     const ro = new ResizeObserver(measure)
     if (containerRef.current) ro.observe(containerRef.current)
+    if (contentRef.current) ro.observe(contentRef.current)
     window.addEventListener("resize", measure)
     return () => {
       ro.disconnect()
@@ -132,34 +190,43 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
         onPointerDown={onBackgroundPointerDown}
         className={cn("relative max-h-[30rem] overflow-auto p-6", panning ? "cursor-grabbing" : "cursor-grab")}
       >
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
-          {edgePaths.map((p) => (
-            <motion.path
-              key={p.id}
-              d={p.d}
-              fill="none"
-              stroke={p.active ? "var(--color-primary)" : "var(--color-border)"}
-              strokeWidth={p.active ? 1.5 : 1}
-              strokeOpacity={p.active ? 0.7 : 0.5}
-              initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: 1 }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            />
-          ))}
-        </svg>
-        {edgePaths.map((p) => (
-          <div
-            key={p.id}
-            className={cn(
-              "absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-background px-2.5 py-1 text-[11px] font-medium whitespace-nowrap",
-              p.active ? "border-primary/30 text-primary" : "border-border text-muted-foreground/70"
-            )}
-            style={{ left: p.midX, top: p.midY }}
-          >
-            {p.label}
-          </div>
-        ))}
-        <div className="relative flex items-start gap-32">
+        {/* The edge layer lives inside the content wrapper rather than the
+            scroll container. An `inset-0 h-full w-full` SVG resolves against
+            its containing block, so anchored to the scroll container it was
+            only ever as large as the *visible* box — and since an SVG clips its
+            children, every path outside that box disappeared the moment the
+            graph was panned, leaving the label pills (plain divs, unclipped)
+            floating with no lines attached to them. */}
+        <div ref={contentRef} className="relative flex items-start gap-32">
+          <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" aria-hidden>
+            {edgePaths.map((p) => (
+              <motion.path
+                key={p.id}
+                d={p.d}
+                fill="none"
+                stroke={p.active ? "var(--color-primary)" : "var(--color-border)"}
+                strokeWidth={p.active ? 1.5 : 1}
+                strokeOpacity={p.active ? 0.7 : 0.5}
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={{ pathLength: 1, opacity: 1 }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+              />
+            ))}
+          </svg>
+          {edgePaths
+            .filter((p) => p.showLabel)
+            .map((p) => (
+              <div
+                key={p.id}
+                className={cn(
+                  "pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border bg-background px-2.5 py-1 text-[11px] font-medium whitespace-nowrap",
+                  p.active ? "border-primary/30 text-primary" : "border-border text-muted-foreground/70"
+                )}
+                style={{ left: p.midX, top: p.midY }}
+              >
+                {p.label}
+              </div>
+            ))}
           {columns.map((col, ci) => (
             <div key={ci} className="flex flex-col gap-10">
               {col.map((node) => {
@@ -189,7 +256,7 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
                   >
                     <div className="flex items-center gap-1.5 text-muted-foreground">
                       <NodeIcon kind={node.kind} className="size-3.5" />
-                      <span className="text-[10px] tracking-wide uppercase">{node.kind}</span>
+                      <span className="text-[10px]">{node.kind}</span>
                     </div>
                     <div className="mt-1 truncate text-sm font-semibold">{node.label}</div>
                     {node.subtitle && (
@@ -239,14 +306,28 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
               ))}
           </dl>
 
-          {inspected.content &&
-            (MESSAGE_KINDS.has(inspected.kind) ? (
-              <div className="mt-2.5 rounded-md bg-muted px-3 py-2 text-[0.8rem] text-foreground">{inspected.content}</div>
-            ) : (
-              <div className="mt-2.5 max-h-64 overflow-y-auto rounded-md bg-muted px-3 py-2.5">
-                <Markdown className="text-[0.8rem]">{inspected.content}</Markdown>
+          {/* A preview, not the document: clipped to a fixed height with the
+              cut edge faded so it reads as "there is more", and the whole thing
+              opens the full viewer. Clipping the real renderer rather than
+              truncating the string keeps the preview in the shape of its source
+              (a Slack thread still looks like a thread) at the cost of cutting
+              mid-message, which the fade is there to signal. */}
+          {inspected.content && (
+            <button
+              type="button"
+              onClick={() => setViewingNode(inspected)}
+              aria-label="View full document"
+              className="group/preview relative mt-2.5 block w-full overflow-hidden text-left"
+              style={{ maxHeight: PREVIEW_MAX_HEIGHT }}
+            >
+              <ContentView node={inspected} compact />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex h-12 items-end justify-center bg-gradient-to-t from-card via-card/80 to-transparent">
+                <span className="pb-1 text-[10px] font-medium text-muted-foreground transition-colors group-hover/preview:text-foreground">
+                  Click to read the rest
+                </span>
               </div>
-            ))}
+            </button>
+          )}
 
           {/* Every raw property on the node, exact key names — the point is that
               a claim like "assigned on March 5" can be checked against what the
@@ -287,7 +368,7 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
               </Dialog.Close>
             </div>
             <div className="overflow-y-auto px-5 py-4">
-              <Markdown className="text-[0.85rem]">{viewingNode?.content ?? ""}</Markdown>
+              {viewingNode && <ContentView node={viewingNode} />}
             </div>
           </Dialog.Popup>
         </Dialog.Portal>
