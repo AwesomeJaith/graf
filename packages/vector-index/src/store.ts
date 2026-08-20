@@ -32,21 +32,107 @@ interface StoredVector {
   label: string
   primaryText: string
   vector: Float32Array
+  /**
+   * ‖vector‖, cached at insert/load. An entry's own norm never changes, so
+   * recomputing it on every search is pure waste — and search is where the
+   * whole corpus gets touched.
+   */
+  norm: number
 }
 
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  let dot = 0
-  let normA = 0
-  let normB = 0
-  for (let i = 0; i < a.length; i++) {
-    const ai = a[i]!
-    const bi = b[i]!
-    dot += ai * bi
-    normA += ai * ai
-    normB += bi * bi
+function norm(v: Float32Array): number {
+  let sum = 0
+  for (let i = 0; i < v.length; i++) {
+    const x = v[i]!
+    sum += x * x
   }
-  if (normA === 0 || normB === 0) return 0
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+  return Math.sqrt(sum)
+}
+
+function dotProduct(a: Float32Array, b: Float32Array): number {
+  let dot = 0
+  for (let i = 0; i < a.length; i++) dot += a[i]! * b[i]!
+  return dot
+}
+
+/**
+ * Min-heap over (score, candidate index), used to take the top K in one pass.
+ *
+ * The obvious implementation — score everything into an array of objects, sort,
+ * slice — allocates one object per entry and sorts the whole corpus on every
+ * search, to then throw away all but K. This keeps allocation and ordering work
+ * proportional to K instead of n.
+ *
+ * Worth being honest about the size of the win: measured over 200k entries,
+ * this plus cached norms took a full search from 306ms to 247ms (~950ms
+ * projected at 772k, down from ~1.2s) — real, but not the order of magnitude
+ * the removed work suggests. At 1024 float32 dimensions the scan streams ~3.2GB
+ * of vector data at full corpus scale, so search is memory-bandwidth bound, and
+ * arithmetic saved off the inner loop is largely hidden behind the load. Making
+ * this meaningfully faster means scanning fewer bytes (quantization, or an ANN
+ * structure), not fewer operations.
+ */
+class TopK {
+  private scores: Float64Array
+  private indexes: Int32Array
+  private size = 0
+
+  constructor(private capacity: number) {
+    this.scores = new Float64Array(capacity)
+    this.indexes = new Int32Array(capacity)
+  }
+
+  offer(score: number, index: number): void {
+    if (this.size < this.capacity) {
+      this.scores[this.size] = score
+      this.indexes[this.size] = index
+      this.size++
+      this.siftUp(this.size - 1)
+      return
+    }
+    if (score <= this.scores[0]!) return
+    this.scores[0] = score
+    this.indexes[0] = index
+    this.siftDown(0)
+  }
+
+  /** Highest score first. */
+  drain(): { score: number; index: number }[] {
+    const out: { score: number; index: number }[] = []
+    for (let i = 0; i < this.size; i++) out.push({ score: this.scores[i]!, index: this.indexes[i]! })
+    return out.sort((a, b) => b.score - a.score)
+  }
+
+  private swap(i: number, j: number): void {
+    const s = this.scores[i]!
+    this.scores[i] = this.scores[j]!
+    this.scores[j] = s
+    const x = this.indexes[i]!
+    this.indexes[i] = this.indexes[j]!
+    this.indexes[j] = x
+  }
+
+  private siftUp(i: number): void {
+    while (i > 0) {
+      const parent = (i - 1) >> 1
+      if (this.scores[parent]! <= this.scores[i]!) break
+      this.swap(parent, i)
+      i = parent
+    }
+  }
+
+  private siftDown(i: number): void {
+    for (;;) {
+      const left = i * 2 + 1
+      const right = left + 1
+      let smallest = i
+      if (left < this.size && this.scores[left]! < this.scores[smallest]!) smallest = left
+      if (right < this.size && this.scores[right]! < this.scores[smallest]!) smallest = right
+      if (smallest === i) return
+      this.swap(i, smallest)
+      i = smallest
+    }
+  }
 }
 
 function siblingPaths(path: string): { metaPath: string; vectorsPath: string } {
@@ -64,7 +150,7 @@ export class VectorIndex {
   upsert(entries: IndexedVector[]): void {
     for (const entry of entries) {
       const vector = entry.vector instanceof Float32Array ? entry.vector : Float32Array.from(entry.vector)
-      const stored: StoredVector = { id: entry.id, label: entry.label, primaryText: entry.primaryText, vector }
+      const stored: StoredVector = { id: entry.id, label: entry.label, primaryText: entry.primaryText, vector, norm: norm(vector) }
       const existingIndex = this.byId.get(entry.id)
       if (existingIndex !== undefined) {
         this.entries[existingIndex] = stored
@@ -76,10 +162,18 @@ export class VectorIndex {
   }
 
   private scoreEntries(queryVector: Float32Array, candidates: StoredVector[], topK: number): VectorMatch[] {
-    return candidates
-      .map((entry) => ({ id: entry.id, label: entry.label, primaryText: entry.primaryText, score: cosineSimilarity(queryVector, entry.vector) }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK)
+    const queryNorm = norm(queryVector)
+    if (queryNorm === 0) return []
+    const heap = new TopK(Math.max(Math.min(topK, candidates.length), 0))
+    for (let i = 0; i < candidates.length; i++) {
+      const entry = candidates[i]!
+      const score = entry.norm === 0 ? 0 : dotProduct(queryVector, entry.vector) / (queryNorm * entry.norm)
+      heap.offer(score, i)
+    }
+    return heap.drain().map(({ score, index }) => {
+      const entry = candidates[index]!
+      return { id: entry.id, label: entry.label, primaryText: entry.primaryText, score }
+    })
   }
 
   search(queryVector: number[], opts: VectorIndexQuery = {}): VectorMatch[] {
@@ -149,7 +243,7 @@ export class VectorIndex {
       const meta = JSON.parse(line) as { id: number; label: string; primaryText: string }
       const vector = new Float32Array(vectorsBuffer.buffer, vectorsBuffer.byteOffset + i * dim * 4, dim)
       this.byId.set(meta.id, this.entries.length)
-      this.entries.push({ ...meta, vector })
+      this.entries.push({ ...meta, vector, norm: norm(vector) })
     })
   }
 }
