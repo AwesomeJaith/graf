@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { getNodeById, runQueryHttp } from "@workspace/graph-client"
+import { getNodesByIdBatch, runGraphQuery } from "@workspace/graph-client"
 import { findNodeLabel, loadGraphSchema, type GraphSchema } from "@workspace/graph-schema"
 import { embedText, VectorIndex } from "@workspace/vector-index"
 
@@ -19,27 +19,47 @@ function loadIndex(): VectorIndex {
   return cachedIndex
 }
 
+/**
+ * Fetches full node detail for a set of vector matches, one query per distinct
+ * label rather than one per match. The index only stores id/label/primaryText,
+ * so every match needs a graph read to get its real properties — and against
+ * HydraDB Cloud each read is a ~100ms round trip, so hydrating 20 candidates
+ * serially cost two seconds of every question's latency on its own. Matches are
+ * returned in the index's relevance order, not the graph's row order.
+ */
 async function hydrate(matches: { id: number; label: string; primaryText: string }[], schema: GraphSchema): Promise<ResolvedNode[]> {
-  const results: ResolvedNode[] = []
+  const byLabel = new Map<string, number[]>()
   for (const match of matches) {
-    const schemaEntry = findNodeLabel(schema, match.label)
-    const spec = getNodeById(match.label, match.id, schemaEntry)
-    try {
-      const rows = await runQueryHttp(spec.query, spec.params)
-      const row = rows[0]
-      if (!row) continue
-      const { id: _id, label: rowLabel, primary_text, ...rest } = row
-      results.push({
-        id: match.id,
-        label: (rowLabel as string) ?? match.label,
-        primaryText: (primary_text as string) ?? match.primaryText,
-        properties: rest as ResolvedNode["properties"],
-      })
-    } catch {
-      continue
-    }
+    const list = byLabel.get(match.label) ?? []
+    list.push(match.id)
+    byLabel.set(match.label, list)
   }
-  return results
+
+  const hydrated = new Map<number, ResolvedNode>()
+  await Promise.all(
+    Array.from(byLabel.entries()).map(async ([label, ids]) => {
+      const spec = getNodesByIdBatch(label, ids, findNodeLabel(schema, label))
+      try {
+        for (const row of await runGraphQuery(spec.query, spec.params)) {
+          const { id, label: rowLabel, primary_text, ...rest } = row
+          if (typeof id !== "number") continue
+          hydrated.set(id, {
+            id,
+            label: (rowLabel as string) ?? label,
+            primaryText: (primary_text as string) ?? "",
+            properties: rest as ResolvedNode["properties"],
+          })
+        }
+      } catch {
+        // A label with no rows (or a transport error on one label) shouldn't
+        // drop the matches found under every other label.
+      }
+    })
+  )
+
+  return matches
+    .map((match) => hydrated.get(match.id))
+    .filter((node): node is ResolvedNode => node !== undefined)
 }
 
 /**

@@ -10,9 +10,12 @@
     "typecheck": "turbo typecheck",
     "seed:demo": "tsx packages/graph-client/scripts/seed-demo.ts",
     "bench:ingest": "tsx packages/bench/src/ingest.ts",
+    "bench:ingest:full": "node --max-old-space-size=8192 --import tsx packages/bench/src/ingest-full.ts",
+    "bench:embed:full": "node --max-old-space-size=4096 --import tsx packages/bench/src/embed-full.ts",
     "bench:baseline": "tsx packages/bench/src/baseline-vector-rag.ts",
     "bench:graph": "tsx packages/bench/src/graph-retrieval.ts",
-    "bench:eval": "tsx packages/bench/src/run-eval.ts"
+    "bench:eval": "tsx packages/bench/src/run-eval.ts",
+    "bench:verify": "tsx packages/bench/src/verify-graph.ts"
   },
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",

@@ -25,6 +25,11 @@ export function useConversations() {
   const loaded = React.useRef(false)
 
   React.useEffect(() => {
+    // StrictMode runs this effect twice in dev; without the guard both passes
+    // see an empty list and each POSTs a new conversation, so every dev reload
+    // of a fresh database leaves two empty chats in the sidebar.
+    if (loaded.current) return
+    loaded.current = true
     ;(async () => {
       const res = await fetch("/api/conversations")
       const data = await res.json()
@@ -35,7 +40,6 @@ export function useConversations() {
       }
       setConversations(list)
       setActiveId(list[0]!.id)
-      loaded.current = true
     })()
   }, [])
 

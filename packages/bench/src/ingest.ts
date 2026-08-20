@@ -10,7 +10,7 @@ import {
 } from "@workspace/graph-client"
 import { VectorIndex, embedText } from "@workspace/vector-index"
 import { loadRawDocs, loadQuestions } from "./loader"
-import { normalizeDoc, type ContentLabel, type NormalizedDoc } from "./adapt"
+import { normalizeDoc, type NormalizedDoc } from "./adapt"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR =

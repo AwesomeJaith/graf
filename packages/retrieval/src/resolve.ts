@@ -1,4 +1,4 @@
-import { getNodeById, listNodesByLabel, runQueryHttp, singleSourcePaths, unwrapValue, type GraphPath } from "@workspace/graph-client"
+import { expandNeighborhood, getNodeById, listNodesByLabel, runGraphQuery, unwrapValue } from "@workspace/graph-client"
 import { findNodeLabel, type GraphSchema } from "@workspace/graph-schema"
 
 import { searchCandidatesByLabel } from "./content-search"
@@ -120,7 +120,7 @@ async function gatherCandidatePool(mention: { text: string; likelyLabels: string
   for (const label of searchLabels) {
     const schemaEntry = findNodeLabel(schema, label)
     const spec = listNodesByLabel(label, 50, schemaEntry)
-    const rows = await runQueryHttp(spec.query, spec.params)
+    const rows = await runGraphQuery(spec.query, spec.params)
     for (const row of rows) {
       const id = row.id as number
       if (seen.has(id)) continue
@@ -152,19 +152,22 @@ function shortlist(mention: string, candidates: ResolvedNode[], max = 8): Resolv
   return (overlap.length > 0 ? overlap : candidates).slice(0, max)
 }
 
-/** One-hop neighbor names/types for a candidate — the graph signal a bare name/title can't give the ranker. */
-async function neighborSummary(id: number, schema: GraphSchema): Promise<string> {
+/**
+ * One-hop neighbor names/types for a candidate — the graph signal a bare
+ * name/title can't give the ranker. This is what makes "Sam" resolve by
+ * noticing which Sam actually connects to the "Atlas" the question also names,
+ * so it runs per shortlisted candidate on every question.
+ */
+async function neighborSummary(id: number, label: string, schema: GraphSchema): Promise<string> {
   const relTypes = schema.relationships.map((r) => r.type)
-  if (relTypes.length === 0) return ""
-  const spec = singleSourcePaths(id, { relTypes, relDirection: "both", maxLen: 1, pathCount: 6 })
+  if (relTypes.length === 0 || !label) return ""
+  const spec = expandNeighborhood(label, [id], relTypes, 12)
   try {
-    const rows = await runQueryHttp(spec.query, spec.params)
+    const rows = await runGraphQuery(spec.query, spec.params)
     const names = new Set<string>()
     for (const row of rows) {
-      const path = row.path as GraphPath | undefined
-      for (const node of path?.nodes ?? []) {
-        if (node.id !== id) names.add(`${node.primaryText} (${node.label})`)
-      }
+      if (row.nodeId === id) continue
+      names.add(`${row.nodePrimaryText as string} (${row.nodeLabel as string})`)
     }
     return Array.from(names).slice(0, 6).join(", ")
   } catch {
@@ -194,7 +197,7 @@ export async function resolveEntities(
     shortlisted.map(async (p) => ({
       mention: p.mention,
       candidates: await Promise.all(
-        p.shortlist.map(async (c) => ({ ...c, neighbors: await neighborSummary(c.id, schema) }))
+        p.shortlist.map(async (c) => ({ ...c, neighbors: await neighborSummary(c.id, c.label, schema) }))
       ),
     }))
   )
@@ -265,7 +268,7 @@ function firstSubtitle(node: ResolvedNode): string | undefined {
 export async function fetchResolvedNode(label: string, id: number, schema: GraphSchema): Promise<ResolvedNode | undefined> {
   const schemaEntry = findNodeLabel(schema, label)
   const spec = getNodeById(label, id, schemaEntry)
-  const rows = await runQueryHttp(spec.query, spec.params)
+  const rows = await runGraphQuery(spec.query, spec.params)
   const row = rows[0]
   if (!row) return undefined
   const { id: _id, label: rowLabel, primary_text, ...rest } = row

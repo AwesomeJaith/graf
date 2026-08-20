@@ -1,18 +1,40 @@
-import { runQueryHttp, singleSourcePaths, type GraphPath } from "@workspace/graph-client"
+import { expandNeighborhood, runGraphQuery, stripRendererKeys } from "@workspace/graph-client"
 import type { GraphSchema } from "@workspace/graph-schema"
 
 import type { ResolvedNode, TraceEdge, TraceNode } from "./types"
 
 const MAX_HOPS = 3
 const MAX_NODES = 40
-const MAX_PATHS_PER_SOURCE = 20
+/** Per-label cap on one hop's expansion — a hub node (a Project with 30k tasks) would otherwise flood the frontier. */
+const MAX_ROWS_PER_EXPANSION = 200
+
+interface ExpansionRow {
+  sourceId: number
+  destinationId: number
+  relId: number
+  relType: string
+  rel?: Record<string, unknown>
+  nodeId: number
+  nodeLabel?: string
+  nodePrimaryText?: string
+  node?: Record<string, unknown>
+}
 
 /**
- * Expansion via HydraDB's native `algo.SSpaths` path procedure — one query
- * per resolved entity returns real bounded paths (nodes + relationships,
- * with actual relationship ids/properties) instead of stitching together
- * many single-type MATCH calls. This is the graph-native traversal the
- * answer and the trace are built from.
+ * Breadth-first expansion from every resolved entity, one query per
+ * (hop, label) group.
+ *
+ * This used to be a single `algo.SSpaths` call per entity, which returned whole
+ * bounded paths in one shot. HydraDB Cloud rejects all procedure calls, so the
+ * walk is driven client-side over `expandNeighborhood` instead: each round
+ * takes the current frontier, expands it one untyped hop in both directions,
+ * and keeps the new neighbors as the next frontier. Same traversal, same trace
+ * — the difference is that the hop boundary is now explicit here rather than
+ * inside the engine, which also makes the per-hop node budget enforceable
+ * instead of relying on a `pathCount` heuristic.
+ *
+ * Ids come from explicit `.id` projections, never from a returned node's `id`
+ * key: the cloud renderer overwrites that with a collection-internal id.
  */
 export async function expandGraph(
   resolvedNodes: ResolvedNode[],
@@ -38,36 +60,62 @@ export async function expandGraph(
       : allTypes
   if (relTypes.length === 0) return { nodes: Array.from(nodes.values()), edges: [] }
 
-  for (const rn of resolvedNodes) {
-    const spec = singleSourcePaths(rn.id, {
-      relTypes,
-      relDirection: "both",
-      maxLen: MAX_HOPS,
-      pathCount: MAX_PATHS_PER_SOURCE,
-    })
-    let rows: Record<string, unknown>[]
-    try {
-      rows = await runQueryHttp(spec.query, spec.params)
-    } catch {
-      continue // no matching relationships from this source at all; not an error worth surfacing
-    }
+  // Frontier is grouped by label because the expansion query has to name one:
+  // a labelless `MATCH (a {id: ...})` can't use the id index and full-scans.
+  let frontier = groupByLabel(resolvedNodes.map((rn) => ({ id: rn.id, label: rn.label })))
 
-    for (const row of rows) {
-      const path = row.path as GraphPath | undefined
-      if (!path) continue
-      for (const node of path.nodes) {
-        if (nodes.has(node.id) || nodes.size >= MAX_NODES) continue
-        nodes.set(node.id, { id: node.id, label: node.label, primaryText: node.primaryText, role: "hop", properties: node.properties })
+  for (let hop = 0; hop < MAX_HOPS && frontier.size > 0 && nodes.size < MAX_NODES; hop++) {
+    const groups = Array.from(frontier.entries())
+    const results = await Promise.all(
+      groups.map(async ([label, ids]) => {
+        const spec = expandNeighborhood(label, ids, relTypes, MAX_ROWS_PER_EXPANSION)
+        try {
+          return (await runGraphQuery(spec.query, spec.params)) as unknown as ExpansionRow[]
+        } catch {
+          return [] // no matching relationships from this group at all; not an error worth surfacing
+        }
+      })
+    )
+
+    const discovered: { id: number; label: string }[] = []
+    for (const row of results.flat()) {
+      if (typeof row.nodeId === "number" && !nodes.has(row.nodeId) && nodes.size < MAX_NODES) {
+        const label = row.nodeLabel ?? ""
+        nodes.set(row.nodeId, {
+          id: row.nodeId,
+          label,
+          primaryText: row.nodePrimaryText ?? "",
+          role: "hop",
+          properties: stripRendererKeys(row.node),
+        })
+        discovered.push({ id: row.nodeId, label })
       }
-      for (const rel of path.relationships) {
-        const key = `${rel.sourceId}-${rel.type}-${rel.destinationId}`
-        if (edges.has(key)) continue
-        edges.set(key, { id: key, from: rel.sourceId, to: rel.destinationId, type: rel.type, properties: rel.properties })
+      const key = `${row.sourceId}-${row.relType}-${row.destinationId}`
+      if (!edges.has(key)) {
+        edges.set(key, {
+          id: key,
+          from: row.sourceId,
+          to: row.destinationId,
+          type: row.relType,
+          properties: stripRendererKeys(row.rel),
+        })
       }
     }
+    frontier = groupByLabel(discovered)
   }
 
   // Drop edges whose endpoints didn't make it into the (size-capped) node set.
   const finalEdges = Array.from(edges.values()).filter((e) => nodes.has(e.from) && nodes.has(e.to))
   return { nodes: Array.from(nodes.values()), edges: finalEdges }
+}
+
+function groupByLabel(items: { id: number; label: string }[]): Map<string, number[]> {
+  const out = new Map<string, number[]>()
+  for (const { id, label } of items) {
+    if (!label) continue
+    const list = out.get(label) ?? []
+    list.push(id)
+    out.set(label, list)
+  }
+  return out
 }

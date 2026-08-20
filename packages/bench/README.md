@@ -55,6 +55,12 @@ Common shape after normalization:
 Ids `10000+` are reserved for bench data so it coexists with `seed-demo.ts`'s hand-authored graph
 (ids `1-999ish`) in the same HydraDB namespace without collisions.
 
+Body text comes from each document's own declared `content_field_names`, not a hardcoded field per
+source type. The declared field list varies per document even within a source (a confluence page
+might be `body` or `content`; a jira ticket might declare `description` alone or a dozen fields like
+`investigation`/`root_cause`/`resolution`/`comments`), so reading one fixed field silently dropped
+most of the real content for many documents.
+
 ## Running it
 
 ```bash
@@ -63,9 +69,64 @@ pnpm run bench:ingest
 
 Requires `HYDRADB_BOLT_URL`/`HYDRADB_AUTH_TOKEN` (writes the graph) and `AWS_REGION`/
 `BEDROCK_EMBEDDING_MODEL_ID` (embeds every node into the vector-index sidecar at
-`data/vector-index.sample.json`, ~9MB, gitignored — regenerate rather than commit). Safe to
+`data/vector-index.sample.json`, gitignored — regenerate rather than commit). Safe to
 re-run: node/relationship ids are deterministic given the same input files, so writes are
 idempotent `MERGE`s.
+
+The sidecar is three files: a small descriptor JSON (`count`/`dim`), a `.meta.jsonl` of
+id/label/primaryText one per line, and a `.vectors.bin` of packed float32 vectors located by
+offset. A plain JSON array of vectors costs ~18 bytes per float as text, which is fine for a few
+hundred nodes and double-digit GB for the full corpus.
+
+## Full corpus (511,962 documents)
+
+The full corpus is the same repo's `generated_data/sources/` (5.0 GB, gitignored — re-fetch rather
+than commit it) and loads into a **HydraDB Cloud BYOG collection**, not the local node:
+
+```bash
+pnpm run bench:ingest:full     # graph, ~35 min
+pnpm run bench:embed:full      # embeddings, hours — resumable, run it after the graph lands
+pnpm run bench:verify          # counts + spot-checks against whatever collection env points at
+```
+
+Needs `HYDRA_DB_API_KEY`, plus `GRAF_GRAPH_TRANSPORT=byog`, `HYDRADB_BYOG_DATABASE`,
+`HYDRADB_BYOG_COLLECTION` and `VECTOR_INDEX_PATH` for the app to read what was written.
+`BENCH_MAX_DOCS=2000` with a throwaway `HYDRADB_BYOG_COLLECTION` does a strided trial run over
+every source type first.
+
+`src/ingest-full.ts` exists alongside `src/ingest.ts` rather than replacing it — the sample path is
+the regression fixture and stays on Bolt/local. Four things had to differ to make half a million
+documents possible at all:
+
+- **Streaming, not batch.** The sample path holds every normalized doc and row in memory before
+  writing; at corpus scale that is tens of GB. The full path works in shards of 4,000 and keeps only
+  the cross-shard indexes it truly needs (link keys, id→label, written-entity dedupe).
+- **Byte-measured batching.** Both transports cap request *size*, not row count — 2 MiB for Bolt,
+  **256 KiB** for Cloud. Once nodes carry document bodies, row size spans three orders of magnitude
+  between a Person (a name) and a confluence page (kilobytes), so any fixed row count is either
+  wastefully small or fatally large. A previous full-corpus attempt died exactly this way.
+- **Deterministic ids.** Ids are `10000 + hash(kind:naturalKey)` folded into a 2^50 range (inside
+  float64 safe-integer range, since HydraDB renders graph integers as JSON numbers) instead of
+  coming from an in-memory counter. Shard order can therefore never reassign an id, which is what
+  makes every write an idempotent `MERGE` and the whole job restartable from a checkpoint.
+- **Deferred embedding.** Node text streams to a queue file; `embed-full.ts` drains it separately,
+  appending to the sidecar so a checkpoint costs O(new rows) rather than rewriting a ~2 GB blob.
+
+Cross-document `REFERENCES` resolution is also stricter at this scale: a link token must be **6+
+characters and contain a digit**. Link fields include `labels`/`tags`/`topics`/`components` — ordinary
+words — and at half a million documents any short generic token matches thousands of documents.
+`ingest-full.ts` prints its highest-fan-out keys at the end so the rule can be checked rather than
+trusted, and `bench:verify` prints real `REFERENCES` pairs with both endpoints' text.
+
+### Cloud BYOG vs the local node
+
+Cloud's Cypher is a different subset, and one difference is structural: **procedure calls are
+rejected outright**, so `algo.SSpaths`/`algo.SPpaths` are unavailable. Traversal is therefore driven
+client-side over `expandNeighborhood` (one `UNWIND`ed query per hop per label) instead of asking the
+engine for whole paths — see `packages/retrieval/src/traverse.ts`. Also relevant when reading rows
+back: the JSON renderer injects its own `id`/`labels` onto returned nodes, overwriting Graf's `id`
+*property*, so app-level ids must come from explicit `n.id AS ...` projections and never from a
+whole-node return.
 
 ## Evaluation
 
@@ -154,9 +215,11 @@ Result (`data/results/graph-retrieval.json`), 55/55 questions answered:
 retrieval clearly wins on — 93% overall vs baseline's 83%, and **96–100%** specifically on
 `project_related` and `conflicting_info` (vs baseline's 78%/83%), which are exactly the
 cross-source-aggregation and conflict categories the connected ingestion (shared `Project` nodes
-across jira/linear/confluence/github) was built for. `algo.SSpaths` traversal from a resolved
-entity or a semantically-matched content node genuinely reaches the right documents more often
-than top-K cosine alone.
+across jira/linear/confluence/github) was built for. Bounded traversal from a resolved entity or a
+semantically-matched content node genuinely reaches the right documents more often than top-K cosine
+alone. (These numbers were measured when traversal ran through `algo.SSpaths`; it is now the
+client-side hop expansion described above, which walks the same edges under the same hop/node
+budget.)
 
 Overall *correctness* and *completeness* are still **lower** than the vector-RAG baseline
 (19%/27% vs 25%/37%), for reasons that are about synthesis input quality, not the retrieval

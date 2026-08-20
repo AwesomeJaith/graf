@@ -191,6 +191,53 @@ export function singleSourcePaths(
   }
 }
 
+/**
+ * Portable replacement for the `algo.SSpaths` expansion above: HydraDB Cloud
+ * rejects every `CALL <procedure>` at parse time, so open-ended traversal has
+ * to be expressed as plain pattern matching.
+ *
+ * One query covers a whole frontier of same-label ids via `UNWIND`, walks one
+ * untyped hop in both directions, and filters on the app-level `rel_type`
+ * property rather than the Cypher relationship type — so a caller can restrict
+ * to a set of types without splicing N type names into the pattern (a pattern
+ * takes one type per hop).
+ *
+ * Endpoints come back as `startNode(r).id` / `endNode(r).id` rather than being
+ * inferred from the match direction, which keeps each edge's true orientation
+ * even though the pattern is undirected. The neighbor is returned twice: as
+ * `node` (the whole property bag) and as an explicit `nodeId` projection,
+ * because the JSON renderer overwrites a returned node's `id` with the
+ * collection-internal one — see `stripRendererKeys` in byog.ts.
+ *
+ * The frontier must be label-scoped: a labelless `MATCH (a {id: ...})` cannot
+ * use the per-label id index and degrades into a full scan, which blows the
+ * 8s read budget at corpus scale.
+ */
+export function expandNeighborhood(
+  label: string,
+  ids: number[],
+  relTypes: string[],
+  limit = 200
+): QuerySpec {
+  assertIdentifier(label, "label")
+  return {
+    query: `UNWIND $ids AS row MATCH (a:${label} {id: row.id})-[r]-(b) WHERE r.rel_type IN $relTypes RETURN startNode(r).id AS sourceId, endNode(r).id AS destinationId, r.id AS relId, r.rel_type AS relType, r AS rel, b.id AS nodeId, b.label AS nodeLabel, b.primary_text AS nodePrimaryText, b AS node LIMIT ${Math.max(1, Math.floor(limit))}`,
+    params: { ids: ids.map((id) => ({ id: toInt(id) })), relTypes },
+  }
+}
+
+/**
+ * Every read Graf issues filters or joins on the app-level `id` property, so
+ * without this index each one is a full label scan. At corpus scale that is the
+ * difference between a 100ms query and blowing the server's execution budget —
+ * create it per label *before* bulk loading, since the load itself is a stream
+ * of `MERGE (n:Label {id: ...})`.
+ */
+export function createIdIndex(label: string): QuerySpec {
+  assertIdentifier(label, "label")
+  return { query: `CREATE INDEX FOR (n:${label}) ON (n.id)`, params: {} }
+}
+
 export interface UpsertNodeRow {
   id: number
   label: string
@@ -198,10 +245,24 @@ export interface UpsertNodeRow {
   [property: string]: string | number | boolean
 }
 
+export interface UpsertNodeOptions {
+  /**
+   * Put the label inside the MERGE pattern (`MERGE (n:Label {id})`) instead of
+   * matching on id alone and adding the label with `SET n:Label`.
+   *
+   * The default (label out of the pattern) is what the self-hosted node's
+   * Cypher subset accepts. Set this for HydraDB Cloud, where a labelless MERGE
+   * cannot use the per-label id index from `createIdIndex` and turns every
+   * batch in a 500k-node load into a full scan against a 30s write budget.
+   */
+  labelInMergePattern?: boolean
+}
+
 /** Batch upsert nodes. Every row must share the same property keys (dynamic SET from the first row's keys). */
 export function upsertNodesBatch(
   label: string,
-  rows: UpsertNodeRow[]
+  rows: UpsertNodeRow[],
+  opts: UpsertNodeOptions = {}
 ): QuerySpec {
   assertIdentifier(label, "label")
   if (rows.length === 0) throw new Error("upsertNodesBatch: rows is empty")
@@ -209,8 +270,11 @@ export function upsertNodesBatch(
   const setClause = keys
     .map((k) => `n.${assertIdentifier(k, "property")} = row.${k}`)
     .join(", ")
+  const query = opts.labelInMergePattern
+    ? `UNWIND $rows AS row MERGE (n:${label} {id: row.id}) SET ${setClause}`
+    : `UNWIND $rows AS row MERGE (n {id: row.id}) SET n:${label}, ${setClause}`
   return {
-    query: `UNWIND $rows AS row MERGE (n {id: row.id}) SET n:${label}, ${setClause}`,
+    query,
     params: { rows: rows.map((row) => ({ ...row, id: toInt(row.id) })) },
   }
 }
@@ -271,6 +335,65 @@ export function upsertRelationshipsBatch(
  * each schema-declared label/relationship type actually has data, one query
  * per candidate since labels/types can't be parameterized.
  */
+/**
+ * Splits rows into batches bounded by *measured serialized bytes*, not row
+ * count. Both transports cap the request, not the row count — 2 MiB for Bolt,
+ * 256 KiB for HydraDB Cloud — and once node properties carry full document
+ * bodies, row size varies by three orders of magnitude between a Person (a
+ * name) and a Confluence page (kilobytes of text). Any fixed row count is
+ * therefore either far too small for the small rows or fatally too large for
+ * the big ones; a full-corpus load died exactly this way.
+ *
+ * `maxRows` is a secondary ceiling so a batch of tiny rows still finishes
+ * inside the server's write budget, and a single row over `maxBytes` is emitted
+ * alone rather than dropped — truncating oversized *properties* is the caller's
+ * job (see `truncateProperties`), because a row that can never fit would
+ * otherwise retry forever.
+ */
+export function chunkRowsBySize<T>(
+  rows: T[],
+  maxBytes: number,
+  maxRows: number
+): T[][] {
+  const batches: T[][] = []
+  let current: T[] = []
+  let currentBytes = 0
+  for (const row of rows) {
+    // +1 for the comma this row adds to the serialized array.
+    const size = JSON.stringify(row).length + 1
+    if (current.length > 0 && (currentBytes + size > maxBytes || current.length >= maxRows)) {
+      batches.push(current)
+      current = []
+      currentBytes = 0
+    }
+    current.push(row)
+    currentBytes += size
+  }
+  if (current.length > 0) batches.push(current)
+  return batches
+}
+
+/**
+ * Caps each string property at `maxChars`. A single pathological document can
+ * exceed a transport's whole request cap on its own, and no batching strategy
+ * can rescue a row that never fits — it has to be shortened or it can never be
+ * written at all. Truncation is marked so a reader can tell a clipped body from
+ * a genuinely short one.
+ */
+export function truncateProperties<T extends Record<string, string | number | boolean>>(
+  row: T,
+  maxChars: number
+): T {
+  let out: T | undefined
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value !== "string" || value.length <= maxChars) continue
+    out ??= { ...row }
+    ;(out as Record<string, string | number | boolean>)[key] =
+      `${value.slice(0, maxChars)}… [truncated ${value.length - maxChars} chars]`
+  }
+  return out ?? row
+}
+
 export function probeLabelCount(label: string): QuerySpec {
   assertIdentifier(label, "label")
   return { query: `MATCH (n:${label}) RETURN count(*) AS count`, params: {} }
