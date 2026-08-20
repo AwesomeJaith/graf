@@ -118,12 +118,17 @@ Open http://localhost:3000.
 ## Benchmark evaluation
 
 ```bash
-pnpm run bench:eval        # graph-native retrieval, scored against EnterpriseRAG-Bench gold answers
-pnpm run bench:baseline    # baseline vector-only RAG, for comparison
+pnpm run bench:baseline   # baseline vector-only RAG → packages/bench/data/baseline-answers.sample.jsonl
+pnpm run bench:eval packages/bench/data/baseline-answers.sample.jsonl baseline-vector-rag
 ```
 
-Results are broken down by question category (multi-hop, temporal,
-conflicting-info, etc.), not just one aggregate score.
+`bench:eval <answers.jsonl> <label>` scores any system's answers (in
+EnterpriseRAG-Bench's own `{question_id, answer, document_ids}` format)
+against the 55 sample questions and writes
+`packages/bench/data/results/<label>.json`, broken down by question category
+(multi-hop, temporal, conflicting-info, etc.), not just one aggregate score.
+See [`packages/bench/README.md`](packages/bench/README.md) for the current
+baseline numbers and how the sample question/document set was chosen.
 
 ## License
 
