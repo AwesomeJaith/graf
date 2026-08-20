@@ -15,7 +15,8 @@
     "bench:baseline": "tsx packages/bench/src/baseline-vector-rag.ts",
     "bench:graph": "tsx packages/bench/src/graph-retrieval.ts",
     "bench:eval": "tsx packages/bench/src/run-eval.ts",
-    "bench:verify": "tsx packages/bench/src/verify-graph.ts"
+    "bench:verify": "tsx packages/bench/src/verify-graph.ts",
+    "bench:verify:index": "tsx packages/bench/src/verify-index.ts"
   },
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",

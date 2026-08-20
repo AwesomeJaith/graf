@@ -16,7 +16,17 @@ import { answerQuestion } from "@workspace/retrieval"
  */
 
 const dataDir = path.resolve(fileURLToPath(import.meta.url), "../../data")
-const CONCURRENCY = 4
+const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY ?? 4)
+/**
+ * Defaults to the committed sample so the comparison in README.md stays
+ * reproducible with no env set; override both to score the full-corpus load
+ * (`enterprise-rag-bench-full/questions.jsonl`, all 500 gold questions) without
+ * overwriting the sample results the README's numbers refer to.
+ */
+const QUESTIONS_PATH =
+  process.env.BENCH_QUESTIONS_PATH ?? path.join(dataDir, "enterprise-rag-bench-sample", "questions.sample.jsonl")
+const OUT_PATH = process.env.BENCH_ANSWERS_OUT ?? path.join(dataDir, "graph-retrieval-answers.sample.jsonl")
+const LIMIT = Number(process.env.BENCH_QUESTION_LIMIT ?? 0)
 
 interface BenchQuestion {
   question_id: string
@@ -37,10 +47,12 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: nu
 }
 
 async function main() {
-  const questions: BenchQuestion[] = readFileSync(path.join(dataDir, "enterprise-rag-bench-sample", "questions.sample.jsonl"), "utf-8")
+  let questions: BenchQuestion[] = readFileSync(QUESTIONS_PATH, "utf-8")
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line))
+  if (LIMIT > 0) questions = questions.slice(0, LIMIT)
+  console.log(`${questions.length} questions from ${QUESTIONS_PATH} at concurrency ${CONCURRENCY}`)
 
   let done = 0
   const lines = await mapLimit(questions, CONCURRENCY, async (q) => {
@@ -64,9 +76,8 @@ async function main() {
     }
   })
 
-  const outPath = path.join(dataDir, "graph-retrieval-answers.sample.jsonl")
-  writeFileSync(outPath, lines.join("\n") + "\n")
-  console.log(`wrote ${lines.length} answers to ${outPath}`)
+  writeFileSync(OUT_PATH, lines.join("\n") + "\n")
+  console.log(`wrote ${lines.length} answers to ${OUT_PATH}`)
 }
 
 main().catch((err) => {
