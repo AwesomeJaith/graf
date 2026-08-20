@@ -23,6 +23,16 @@ function timestampFor(node: PipelineNode): string | undefined {
   return undefined
 }
 
+function contentFor(node: PipelineNode): string | undefined {
+  const value = node.properties.content ?? node.properties.text ?? node.properties.body ?? node.properties.description
+  return typeof value === "string" && value ? value : undefined
+}
+
+function urlFor(node: PipelineNode): string | undefined {
+  const value = node.properties.url
+  return typeof value === "string" && value ? value : undefined
+}
+
 function toUiResult(result: AnswerResult): ChatTurnResult {
   const nodes: TraceNode[] = result.nodes.map((n) => ({
     id: String(n.id),
@@ -32,6 +42,8 @@ function toUiResult(result: AnswerResult): ChatTurnResult {
     subtitle: subtitleFor(n),
     source: typeof n.properties.source === "string" ? n.properties.source : undefined,
     timestamp: timestampFor(n),
+    content: contentFor(n),
+    url: urlFor(n),
   }))
 
   const edges: TraceEdge[] = result.edges.map((e) => ({

@@ -45,8 +45,8 @@ export function EntityResolutionPanel({ resolutions, onSelect }: EntityResolutio
                     )}
                     transition={{ type: "spring", stiffness: 500, damping: 40 }}
                   >
-                    <span className="font-medium">{c.name}</span>
-                    <span className="tabular-nums opacity-70">{Math.round(c.confidence * 100)}%</span>
+                    <span className="max-w-56 truncate font-medium">{c.name}</span>
+                    <span className="shrink-0 tabular-nums opacity-70">{Math.round(c.confidence * 100)}%</span>
                   </motion.button>
                 )
               })}

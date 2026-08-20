@@ -3,9 +3,14 @@
 import * as React from "react"
 import { motion } from "motion/react"
 
+import { ExternalLink, X } from "lucide-react"
+
 import type { Trace, TraceNode } from "@/lib/trace-types"
 import { cn } from "@workspace/ui/lib/utils"
+import { Markdown } from "../chat/markdown"
 import { NodeIcon } from "./node-icon"
+
+const MESSAGE_KINDS = new Set(["Message"])
 
 interface GraphTraceProps {
   trace: Trace
@@ -74,11 +79,49 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
   }, [measure])
 
   const dimmed = (id: string) => !!highlightedNodeIds && !highlightedNodeIds.includes(id)
-  const justDraggedRef = React.useRef(false)
+
+  // Pan-to-scroll: drag the background (not a node) to reveal nodes that
+  // spread beyond the panel instead of relying on scrollbars alone.
+  const panState = React.useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null)
+  const [panning, setPanning] = React.useState(false)
+
+  const onBackgroundPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest("[data-node-card]")) return
+    const container = containerRef.current
+    if (!container) return
+    panState.current = { x: e.clientX, y: e.clientY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop }
+    setPanning(true)
+    e.preventDefault()
+  }
+
+  React.useEffect(() => {
+    if (!panning) return
+    function onMove(e: PointerEvent) {
+      const container = containerRef.current
+      const start = panState.current
+      if (!container || !start) return
+      container.scrollLeft = start.scrollLeft - (e.clientX - start.x)
+      container.scrollTop = start.scrollTop - (e.clientY - start.y)
+    }
+    function onUp() {
+      panState.current = null
+      setPanning(false)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [panning])
 
   return (
     <div className="rounded-lg border border-border/70 bg-card/40">
-      <div ref={containerRef} className="relative overflow-x-auto p-6">
+      <div
+        ref={containerRef}
+        onPointerDown={onBackgroundPointerDown}
+        className={cn("relative max-h-[30rem] overflow-auto p-6", panning ? "cursor-grabbing" : "cursor-grab")}
+      >
         <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
           {edgePaths.map((p) => (
             <motion.path
@@ -106,41 +149,28 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
             {p.label}
           </div>
         ))}
-        <div className="relative flex items-start gap-24">
+        <div className="relative flex items-start gap-32">
           {columns.map((col, ci) => (
-            <div key={ci} className="flex flex-col gap-8">
+            <div key={ci} className="flex flex-col gap-10">
               {col.map((node) => {
                 const isDim = dimmed(node.id)
                 return (
                   <motion.div
                     key={node.id}
+                    data-node-card
                     ref={(el) => {
                       if (el) nodeRefs.current.set(node.id, el)
                       else nodeRefs.current.delete(node.id)
                     }}
-                    drag
-                    dragMomentum={false}
-                    dragElastic={0}
-                    dragConstraints={containerRef}
-                    onDragStart={() => {
-                      justDraggedRef.current = true
-                    }}
-                    onDrag={measure}
-                    onDragEnd={measure}
-                    whileDrag={{ zIndex: 10, cursor: "grabbing" }}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: isDim ? 0.35 : 1, y: 0, scale: 1 }}
                     transition={{ duration: 0.35, delay: ci * 0.1 }}
                     onClick={() => {
-                      if (justDraggedRef.current) {
-                        justDraggedRef.current = false
-                        return
-                      }
                       setInspected(node)
                       onNodeClick?.(node)
                     }}
                     className={cn(
-                      "w-44 cursor-grab rounded-md border bg-card px-3 py-2 transition-shadow active:cursor-grabbing",
+                      "w-44 cursor-pointer rounded-md border bg-card px-3 py-2 transition-shadow",
                       "hover:border-primary/40",
                       node.role === "resolved" ? "border-primary/50" : "border-border",
                       node.role === "conflict" && "border-dashed border-primary/60",
@@ -165,15 +195,15 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
       {inspected && (
         <div className="border-t border-border/70 px-4 py-3 text-xs">
           <div className="flex items-center justify-between">
-            <span className="font-semibold">{inspected.label}</span>
-            <button
-              type="button"
-              onClick={() => setInspected(null)}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              close
+            <div className="flex items-center gap-1.5">
+              <NodeIcon kind={inspected.kind} className="size-3.5 text-muted-foreground" />
+              <span className="font-semibold">{inspected.label}</span>
+            </div>
+            <button type="button" onClick={() => setInspected(null)} className="text-muted-foreground hover:text-foreground">
+              <X className="size-3.5" />
             </button>
           </div>
+
           <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
             <dt>Type</dt>
             <dd>{inspected.kind}</dd>
@@ -198,6 +228,27 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
                 </React.Fragment>
               ))}
           </dl>
+
+          {inspected.content &&
+            (MESSAGE_KINDS.has(inspected.kind) ? (
+              <div className="mt-2.5 rounded-md bg-muted px-3 py-2 text-[0.8rem] text-foreground">{inspected.content}</div>
+            ) : (
+              <div className="mt-2.5 max-h-64 overflow-y-auto rounded-md bg-muted px-3 py-2.5">
+                <Markdown className="text-[0.8rem]">{inspected.content}</Markdown>
+              </div>
+            ))}
+
+          {inspected.url && (
+            <a
+              href={inspected.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 flex items-center gap-1 text-primary hover:underline"
+            >
+              <ExternalLink className="size-3" />
+              Open source
+            </a>
+          )}
         </div>
       )}
     </div>

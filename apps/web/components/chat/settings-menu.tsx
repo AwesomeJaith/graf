@@ -30,9 +30,9 @@ export function SettingsMenu({
                 id="reasoning-default"
                 checked={showReasoningByDefault}
                 onCheckedChange={onShowReasoningByDefaultChange}
-                className="relative h-5 w-8 shrink-0 rounded-full bg-muted transition-colors data-[checked]:bg-primary"
+                className="relative flex h-5 w-8 shrink-0 items-center rounded-full bg-muted p-0.5 transition-colors data-[checked]:bg-primary"
               >
-                <Switch.Thumb className="block size-3.5 translate-x-0.5 rounded-full bg-foreground transition-transform data-[checked]:translate-x-[14px]" />
+                <Switch.Thumb className="block size-4 rounded-full bg-foreground transition-transform data-[checked]:translate-x-3" />
               </Switch.Root>
             </div>
           </Popover.Popup>

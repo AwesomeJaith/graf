@@ -12,6 +12,9 @@ export interface TraceNode {
   subtitle?: string
   source?: string
   timestamp?: string
+  /** Full body text (Message.text, Document.content, Issue/Task.body, ...) — what the node inspector renders. */
+  content?: string
+  url?: string
 }
 
 export interface TraceEdge {

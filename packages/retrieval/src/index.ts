@@ -13,7 +13,7 @@ export { planQuery, resolveEntities, type EntityOverride } from "./resolve"
 export { expandGraph } from "./traverse"
 export { detectConflicts } from "./conflicts"
 export { synthesizeAnswer } from "./synthesize"
-export { searchContent } from "./content-search"
+export { searchContent, searchMentions, type MentionCandidate } from "./content-search"
 
 /**
  * Full pipeline: query understanding -> entity resolution -> graph query

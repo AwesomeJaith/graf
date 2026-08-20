@@ -5,6 +5,14 @@ import { ArrowUp } from "lucide-react"
 
 import type { ResponseMode } from "@/lib/trace-types"
 import { Button } from "@workspace/ui/components/button"
+import { MentionMenu } from "./mention-menu"
+
+export interface MentionCandidate {
+  id: number
+  label: string
+  name: string
+  subtitle?: string
+}
 
 const MODES: { key: ResponseMode; label: string }[] = [
   { key: "concise", label: "Concise" },
@@ -19,31 +27,111 @@ interface ChatInputProps {
   disabled?: boolean
 }
 
+/** Finds an in-progress "@mention" ending at the cursor, e.g. "...cc @sam" -> { start: 4, query: "sam" }. */
+function findMentionAtCursor(text: string, cursor: number): { start: number; query: string } | null {
+  const upToCursor = text.slice(0, cursor)
+  const at = upToCursor.lastIndexOf("@")
+  if (at === -1) return null
+  const query = upToCursor.slice(at + 1)
+  if (/\s/.test(query)) return null // the "@" belongs to an already-finished token
+  const charBefore = at > 0 ? upToCursor[at - 1] : " "
+  if (charBefore && !/\s/.test(charBefore)) return null // "foo@bar", not a mention
+  return { start: at, query }
+}
+
 export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputProps) {
   const [value, setValue] = React.useState("")
+  const [mention, setMention] = React.useState<{ start: number; query: string } | null>(null)
+  const [candidates, setCandidates] = React.useState<MentionCandidate[]>([])
+  const [loading, setLoading] = React.useState(false)
+  const [activeIndex, setActiveIndex] = React.useState(0)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+
+  React.useEffect(() => {
+    if (!mention || !mention.query) {
+      setCandidates([])
+      return
+    }
+    setLoading(true)
+    const timeout = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/mentions?q=${encodeURIComponent(mention.query)}`)
+        const data = await res.json()
+        setCandidates(Array.isArray(data.candidates) ? data.candidates : [])
+        setActiveIndex(0)
+      } catch {
+        setCandidates([])
+      } finally {
+        setLoading(false)
+      }
+    }, 200)
+    return () => clearTimeout(timeout)
+  }, [mention])
+
+  function resize(el: HTMLTextAreaElement) {
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }
+
+  function selectMention(candidate: MentionCandidate) {
+    const el = textareaRef.current
+    if (!mention || !el) return
+    const cursor = el.selectionStart ?? value.length
+    const next = `${value.slice(0, mention.start)}@${candidate.name} ${value.slice(cursor)}`
+    setValue(next)
+    setMention(null)
+    requestAnimationFrame(() => {
+      const pos = mention.start + candidate.name.length + 2
+      el.focus()
+      el.setSelectionRange(pos, pos)
+    })
+  }
 
   function submit() {
     const text = value.trim()
     if (!text || disabled) return
     onSubmit(text)
     setValue("")
+    setMention(null)
     if (textareaRef.current) textareaRef.current.style.height = "auto"
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-2">
+    <div className="relative rounded-xl border border-border bg-card p-2">
+      {mention && <MentionMenu candidates={candidates} activeIndex={activeIndex} loading={loading} onSelect={selectMention} />}
       <textarea
         ref={textareaRef}
         value={value}
         rows={1}
-        placeholder="Ask about your organization…"
+        placeholder="Ask about your organization… (@ to mention someone or something)"
         onChange={(e) => {
           setValue(e.target.value)
-          e.target.style.height = "auto"
-          e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
+          resize(e.target)
+          setMention(findMentionAtCursor(e.target.value, e.target.selectionStart ?? e.target.value.length))
         }}
         onKeyDown={(e) => {
+          if (mention) {
+            if (e.key === "ArrowDown") {
+              e.preventDefault()
+              setActiveIndex((i) => Math.min(i + 1, candidates.length - 1))
+              return
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault()
+              setActiveIndex((i) => Math.max(i - 1, 0))
+              return
+            }
+            if ((e.key === "Enter" || e.key === "Tab") && candidates[activeIndex]) {
+              e.preventDefault()
+              selectMention(candidates[activeIndex]!)
+              return
+            }
+            if (e.key === "Escape") {
+              e.preventDefault()
+              setMention(null)
+              return
+            }
+          }
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault()
             submit()

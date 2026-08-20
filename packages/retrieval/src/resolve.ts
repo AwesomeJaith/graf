@@ -215,16 +215,27 @@ export async function resolveEntities(
       .filter((r) => byId.has(r.id))
       .sort((a, b) => b.confidence - a.confidence)
 
-    const candidates = sortedRanked.map((r) => {
+    const allCandidates = sortedRanked.map((r) => {
       const c = byId.get(r.id)!
       return { id: c.id, label: c.label, primaryText: c.primaryText, confidence: r.confidence, subtitle: firstSubtitle(c) }
     })
+    // Keep the top pick regardless, plus only the alternatives that are
+    // actually plausible — otherwise a mention with one real match and three
+    // near-zero also-rans renders as a wall of dead-weight chips.
+    const candidates = allCandidates.filter((c, i) => i === 0 || c.confidence >= MIN_CANDIDATE_CONFIDENCE).slice(0, 5)
 
     const resolvedId = override?.candidateId ?? candidates[0]?.id ?? pool.candidates[0]!.id
 
     return { mention: pool.mention, candidates: candidates.length > 0 ? candidates : fallbackCandidates(pool.candidates), resolvedId }
-  })
+  }).filter((resolution) => (resolution.candidates[0]?.confidence ?? 0) >= MIN_TOP_CONFIDENCE)
+  // A mention the model couldn't actually connect to anything (e.g. a vague
+  // phrase from the question that isn't really an entity reference) still
+  // gets a ranked-but-near-zero candidate rather than an empty list — drop
+  // those rather than showing a "resolved" chip that's really a non-match.
 }
+
+const MIN_TOP_CONFIDENCE = 0.08
+const MIN_CANDIDATE_CONFIDENCE = 0.02
 
 function fallbackCandidates(nodes: ResolvedNode[]) {
   return nodes.slice(0, 5).map((n, i) => ({ id: n.id, label: n.label, primaryText: n.primaryText, confidence: i === 0 ? 1 : 0, subtitle: firstSubtitle(n) }))

@@ -2,7 +2,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { getNodeById, runQueryHttp } from "@workspace/graph-client"
-import { findNodeLabel, type GraphSchema } from "@workspace/graph-schema"
+import { findNodeLabel, loadGraphSchema, type GraphSchema } from "@workspace/graph-schema"
 import { embedText, VectorIndex } from "@workspace/vector-index"
 
 import type { ResolvedNode } from "./types"
@@ -26,7 +26,7 @@ function loadIndex(): VectorIndex {
  * Project at all. Runs alongside entity resolution, not instead of it: this
  * finds *what*, entity resolution finds *who*, graph traversal connects them.
  */
-export async function searchContent(question: string, schema: GraphSchema, topK = 5): Promise<ResolvedNode[]> {
+export async function searchContent(question: string, schema: GraphSchema, topK = 5, minScore = 0.4): Promise<ResolvedNode[]> {
   const index = loadIndex()
   if (index.size() === 0) return []
 
@@ -41,8 +41,9 @@ export async function searchContent(question: string, schema: GraphSchema, topK 
   // fragment) rather than genuinely relevant — without a floor, every
   // question pulls in a handful of unrelated nodes and their traversal
   // neighborhoods, burying the real answer under noise in the trace.
-  const SIMILARITY_FLOOR = 0.4
-  const matches = index.search(queryVector, { topK }).filter((m) => m.score >= SIMILARITY_FLOOR)
+  // (Callers doing interactive search-as-you-type, e.g. @mentions, pass a
+  // much lower floor since a short partial query embeds less confidently.)
+  const matches = index.search(queryVector, { topK }).filter((m) => m.score >= minScore)
   const results: ResolvedNode[] = []
   for (const match of matches) {
     const schemaEntry = findNodeLabel(schema, match.label)
@@ -63,6 +64,30 @@ export async function searchContent(question: string, schema: GraphSchema, topK 
     }
   }
   return results
+}
+
+export interface MentionCandidate {
+  id: number
+  label: string
+  name: string
+  subtitle?: string
+}
+
+function subtitleFor(node: ResolvedNode): string | undefined {
+  const value = node.properties.title ?? node.properties.name ?? node.properties.summary ?? node.properties.status
+  return typeof value === "string" && value !== node.primaryText ? value : undefined
+}
+
+/**
+ * Powers "@" mention search-as-you-type in the chat input — same semantic
+ * index as searchContent, but a much lower relevance floor (a two-letter
+ * partial name embeds nowhere near as confidently as a full sentence) and a
+ * shape suited to an autocomplete list rather than retrieval evidence.
+ */
+export async function searchMentions(query: string, topK = 8): Promise<MentionCandidate[]> {
+  if (!query.trim()) return []
+  const nodes = await searchContent(query, loadGraphSchema(), topK, 0.15)
+  return nodes.map((n) => ({ id: n.id, label: n.label, name: n.primaryText, subtitle: subtitleFor(n) }))
 }
 
 /**
