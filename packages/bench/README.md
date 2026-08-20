@@ -84,9 +84,10 @@ The full corpus is the same repo's `generated_data/sources/` (5.0 GB, gitignored
 than commit it) and loads into a **HydraDB Cloud BYOG collection**, not the local node:
 
 ```bash
-pnpm run bench:ingest:full     # graph, ~35 min
+pnpm run bench:ingest:full     # graph + content sidecar, ~35 min, resumable from a checkpoint
 pnpm run bench:embed:full      # embeddings, hours — resumable, run it after the graph lands
 pnpm run bench:verify          # counts + spot-checks against whatever collection env points at
+pnpm run bench:verify:index    # round-trips the vector sidecar and checks vector/meta alignment
 ```
 
 Needs `HYDRA_DB_API_KEY`, plus `GRAF_GRAPH_TRANSPORT=byog`, `HYDRADB_BYOG_DATABASE`,
@@ -111,6 +112,38 @@ documents possible at all:
   makes every write an idempotent `MERGE` and the whole job restartable from a checkpoint.
 - **Deferred embedding.** Node text streams to a queue file; `embed-full.ts` drains it separately,
   appending to the sidecar so a checkpoint costs O(new rows) rather than rewriting a ~2 GB blob.
+- **Bodies out of the graph.** Document body text is written to a local content sidecar, not stored as
+  a node property — see below.
+
+### Why body text is not in the graph
+
+HydraDB Cloud is memory-resident with a hard `maxmemory` cap, and body text is what fills it. Storing
+bodies as node properties exhausted the instance at **54% of the corpus** (~420k nodes / 1.36M
+relationships), after which every write returned `OOM command not allowed`. That ceiling is the
+tenant's, not the client's — the ingest process itself stayed flat at 0.46 GB throughout, and there is
+no cloud usage/limits endpoint to read the cap from, so the failure only shows up as write rejections.
+
+Bodies are also the one thing the graph never queries: no Cypher Graf issues filters, joins or matches
+on a document body, it only reads it back out as evidence. So they go to `ContentStore`
+(`packages/vector-index/src/content-store.ts`) — an id-keyed sidecar beside the vector index, written
+streaming during ingest:
+
+```
+<base>.content.jsonl   one {id, text} record per line, in write order
+<base>.content.idx     id/offset/length triples, sorted by id
+```
+
+The index is held in memory (~15 MB per million records); the data file — several GB — never is. A
+lookup binary-searches the index and `readSync`s that one byte range, so the web app's resident memory
+stays flat regardless of corpus size. `attachBodyText` in `packages/retrieval/src/body-text.ts` merges
+the text back onto nodes once, right after traversal, before anything downstream reads properties.
+Nodes that already carry inline bodies win, which is what keeps the sample corpus and the demo graph
+working unchanged.
+
+`bench:strip-bodies` removes body properties from an already-loaded cloud graph in place, so a load
+that predates this split can reclaim its memory and resume from its checkpoint instead of reloading
+from scratch. Nothing is lost — the next ingest pass re-derives every body into the sidecar, because
+it re-normalizes all 128 shards regardless of which one it resumes *writing* at.
 
 Cross-document `REFERENCES` resolution is also stricter at this scale: a link token must be **6+
 characters and contain a digit**. Link fields include `labels`/`tags`/`topics`/`components` — ordinary

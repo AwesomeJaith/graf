@@ -55,6 +55,9 @@ packages/bench/data/vector-index.full.json
 # binary sidecars written alongside each index descriptor above
 packages/bench/data/vector-index.*.meta.jsonl
 packages/bench/data/vector-index.*.vectors.bin
+# node body text held out of the graph (see ContentStore) — several GB
+packages/bench/data/vector-index.*.content.jsonl
+packages/bench/data/vector-index.*.content.idx
 
 # full upstream EnterpriseRAG-Bench corpus (~4GB clone, re-fetchable, never commit)
 packages/bench/data/enterprise-rag-bench-full/

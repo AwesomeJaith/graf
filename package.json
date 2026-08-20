@@ -12,6 +12,7 @@
     "bench:ingest": "tsx packages/bench/src/ingest.ts",
     "bench:ingest:full": "node --max-old-space-size=8192 --import tsx packages/bench/src/ingest-full.ts",
     "bench:embed:full": "node --max-old-space-size=4096 --import tsx packages/bench/src/embed-full.ts",
+    "bench:strip-bodies": "tsx packages/bench/src/strip-bodies.ts",
     "bench:baseline": "tsx packages/bench/src/baseline-vector-rag.ts",
     "bench:graph": "tsx packages/bench/src/graph-retrieval.ts",
     "bench:eval": "tsx packages/bench/src/run-eval.ts",

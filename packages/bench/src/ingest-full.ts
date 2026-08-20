@@ -17,6 +17,7 @@ import {
   type UpsertNodeRow,
   type UpsertRelationshipRow,
 } from "@workspace/graph-client"
+import { ContentStoreWriter } from "@workspace/vector-index"
 import { loadQuestions, type RawDoc } from "./loader"
 import { normalizeDoc, type NormalizedDoc } from "./adapt"
 
@@ -62,6 +63,13 @@ const DATA_DIR =
   join(__dirname, "..", "data", "enterprise-rag-bench-full", "generated_data")
 const QUESTIONS_FILE = process.env.BENCH_QUESTIONS_FILE ?? "../questions.jsonl"
 const WORK_DIR = process.env.BENCH_WORK_DIR ?? join(__dirname, "..", "data", "full-ingest")
+/**
+ * The content sidecar is written beside the vector index, not into the scratch
+ * work dir: the work dir holds regenerable intermediates, while this is something
+ * the running app reads at every request (see `attachBodyText`).
+ */
+const CONTENT_STORE_BASE =
+  process.env.VECTOR_INDEX_FULL_PATH ?? join(__dirname, "..", "data", "vector-index.full.json")
 
 /**
  * 256 KiB is the hard cap; the query text, the JSON envelope and any
@@ -73,13 +81,27 @@ const MAX_NODE_ROWS = 400
 const MAX_REL_ROWS = 1200
 /**
  * No batching can save a row that exceeds the whole request cap on its own, so
- * oversized properties are clipped rather than retried forever. Sized to leave
- * room for several documents per batch while keeping enough body text that the
- * document viewer and answer synthesis still have the real content.
+ * oversized properties are clipped rather than retried forever. With bodies held
+ * in the content sidecar this only ever bites a pathological title/summary.
  */
-const MAX_PROPERTY_CHARS = 24_000
+const MAX_PROPERTY_CHARS = 8_000
 const SHARD_SIZE = 4_000
 const WRITE_CONCURRENCY = 12
+
+/**
+ * Properties holding document body text, which is written to the local content
+ * sidecar instead of the graph.
+ *
+ * HydraDB Cloud is memory-resident and a first full-corpus attempt exhausted the
+ * instance's `maxmemory` at ~54% of the corpus — every subsequent write failing
+ * with "OOM command not allowed". Bodies are the bulk of those bytes and the part
+ * no query ever touches: Graf filters, joins and traverses on ids, labels and
+ * relationships, and only reads body text back out as evidence. Keeping bodies
+ * out of the graph is what makes the full 511,962 documents fit; retrieval
+ * re-attaches them from the sidecar after traversal (see
+ * `packages/retrieval/src/body-text.ts`).
+ */
+const BODY_PROPERTIES = ["content", "description", "body", "text"] as const
 
 const CONTENT_LABELS = ["Document", "Message", "Task", "Issue"] as const
 const INDEXED_LABELS = [...CONTENT_LABELS, "Person", "Organization", "Project", "Channel"]
@@ -353,6 +375,7 @@ async function main() {
   // appending would duplicate every already-queued line.
   const linksStream = createWriteStream(linksPath, { flags: "w" })
   const embedStream = createWriteStream(embedQueuePath, { flags: "w" })
+  const contentStore = new ContentStoreWriter(CONTENT_STORE_BASE)
 
   const totalShards = Math.ceil(files.length / SHARD_SIZE)
   const startedAt = Date.now()
@@ -408,12 +431,27 @@ async function main() {
         labelOfId.set(docNodeId, CONTENT_LABELS.indexOf(doc.label))
         if (conflictDsids.has(doc.dsid)) conflictLabels.set(doc.dsid, doc.label)
 
+        // Body text goes to the sidecar, everything the graph can query stays on
+        // the node. Splitting here (rather than deleting keys after the fact)
+        // keeps a shard's node rows key-homogeneous, which the batch UNWIND needs.
+        const graphProperties: Record<string, string | number | boolean> = {}
+        const bodyParts: string[] = []
+        for (const [key, value] of Object.entries(doc.properties)) {
+          if ((BODY_PROPERTIES as readonly string[]).includes(key)) {
+            if (typeof value === "string" && value) bodyParts.push(value)
+          } else {
+            graphProperties[key] = value
+          }
+        }
+        const body = bodyParts.join("\n\n")
+        if (body) await contentStore.append(docNodeId, body)
+
         pushNode(doc.label, {
           id: docNodeId,
           label: doc.label,
           primary_text: doc.primaryText,
           dsid: doc.dsid,
-          ...doc.properties,
+          ...graphProperties,
         })
 
         for (const key of doc.knownKeys) {
@@ -497,10 +535,7 @@ async function main() {
           await write(linksStream, `${JSON.stringify({ i: docNodeId, l: doc.label, t: doc.linkTexts })}\n`)
         }
 
-        const embedText = [doc.primaryText, doc.properties.content, doc.properties.description, doc.properties.body, doc.properties.text]
-          .filter(Boolean)
-          .join("\n")
-          .slice(0, 4000)
+        const embedText = [doc.primaryText, body].filter(Boolean).join("\n").slice(0, 4000)
         if (embedText.trim()) {
           await write(embedStream, `${JSON.stringify({ id: docNodeId, label: doc.label, primaryText: doc.primaryText, text: embedText })}\n`)
         }
@@ -536,7 +571,11 @@ async function main() {
 
   linksStream.end()
   embedStream.end()
-  console.log(`Nodes and direct relationships written. keyIndex=${keyIndex.size.toLocaleString()} distinctive keys.`)
+  await contentStore.close()
+  console.log(
+    `Nodes and direct relationships written. keyIndex=${keyIndex.size.toLocaleString()} distinctive keys, ` +
+      `${contentStore.size.toLocaleString()} body texts in the content sidecar.`
+  )
 
   // -------------------------------------------------------------------------
   // Cross-document REFERENCES

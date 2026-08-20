@@ -1,5 +1,6 @@
 import { loadGraphSchema } from "@workspace/graph-schema"
 
+import { attachBodyText } from "./body-text"
 import { detectConflicts } from "./conflicts"
 import { pickTimestamp } from "./conflicts"
 import { rankNodeIdsByRelevance, searchContent } from "./content-search"
@@ -68,7 +69,12 @@ export async function answerQuestion(
     }
   }
 
-  const { nodes, edges } = await expandGraph(resolvedNodes, schema, plan.focusRelationshipTypes)
+  const { nodes: bareNodes, edges } = await expandGraph(resolvedNodes, schema, plan.focusRelationshipTypes)
+  // Document bodies aren't stored in the graph at full-corpus scale (they
+  // exhausted the cloud instance's memory and no query ever filters on them) —
+  // merge them back from the local sidecar here, once, before anything reads
+  // node properties. A no-op when the graph does carry its own bodies.
+  const nodes = attachBodyText(bareNodes)
   const detected = detectConflicts(nodes, edges)
 
   // Synthesis gets a relevance-filtered view of the touched content nodes
