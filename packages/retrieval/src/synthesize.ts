@@ -76,10 +76,28 @@ export interface SynthesizeResult {
  * node inspector (apps/web) shows the same full property set so the user
  * can check it against the answer.
  */
+/**
+ * Per-property character budgets.
+ *
+ * 240 is right for structural properties — a status, an owner, a URL — where a
+ * long value is noise. It is badly wrong for document body text, which is the
+ * property most questions are actually answered from: at full-corpus scale
+ * bodies run 3-10 KB, so a 240-char cap hands the model a document's title and
+ * summary preamble and cuts off before any specific figure, threshold or
+ * address. That reads to the model as evidence that doesn't contain the answer,
+ * and it correctly abstains — the retrieval was right and the answer was still
+ * lost. Only the handful of content nodes that survive relevance ranking carry
+ * a body, so the larger budget is bounded.
+ */
+const PROPERTY_CHARS = 240
+const BODY_PROPERTY_CHARS = 6_000
+const BODY_PROPERTIES = new Set(["content", "description", "body", "text"])
+
 function compactProperties(properties: Record<string, string | number | boolean>): string {
   const entries = Object.entries(properties).map(([key, value]) => {
     const str = String(value)
-    return [key, str.length > 240 ? `${str.slice(0, 240)}…` : str]
+    const limit = BODY_PROPERTIES.has(key) ? BODY_PROPERTY_CHARS : PROPERTY_CHARS
+    return [key, str.length > limit ? `${str.slice(0, limit)}…` : str]
   })
   return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : "{}"
 }
