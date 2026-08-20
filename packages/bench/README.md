@@ -192,6 +192,36 @@ edges into those same targets get restored.
 `ingest-full.ts` also prints its highest-fan-out keys, marking the suppressed ones, and `bench:verify`
 prints real `REFERENCES` pairs with both endpoints' text.
 
+### What a full-corpus question actually costs
+
+Measured on the loaded corpus (772,136 nodes / ~3.2M relationships, 1024-dim embeddings), because
+every one of these was a guess worth checking before optimizing anything:
+
+| Stage | Time | Notes |
+|---|---|---|
+| `planQuery` (LLM) | 3-4s | |
+| `resolveEntities` | 7-23s | sub-steps ~3s; the rest is one ranking call |
+| `searchContent` | ~0.8s | brute-force cosine over the whole index |
+| `expandGraph` | ~1.0s | client-side hops are **not** the bottleneck |
+| `synthesizeAnswer` (LLM) | 10-12s | |
+| **total** | **21-41s** | 32-61s end to end through the web route |
+
+Two things to know before trying to make this faster:
+
+- **It's LLM-bound, not graph-bound.** Traversal and vector search together are under 2s. The ranking
+  call is output-bound (a 12 KB prompt, but 40 candidates × confidence to emit), so the levers are a
+  shorter shortlist or the fast model for ranking — not query tuning.
+- **A slow question can exceed the chat route's own `maxDuration = 60`.** It hasn't in local runs, but
+  the margin is thin at the top of that range.
+
+The vector sidecar is loaded resident and scanned linearly: **~3.8 GB RSS and ~950ms per unfiltered
+search** at full corpus (measured 1,040 MB / 247ms at 201k entries and scaled; label-filtered search
+is ~10x cheaper since it skips most of the scan). At 1024 float32 dimensions a full scan streams
+~3.2 GB, so search is memory-bandwidth bound — the only real lever left is scanning fewer bytes
+(quantization or an ANN index), not fewer operations. Loading takes ~1s, and the index is cached in a
+module-level variable, so **a long-running server won't see embeddings written after it started** —
+restart it after `bench:embed:full` finishes.
+
 ### Cloud BYOG vs the local node
 
 Cloud's Cypher is a different subset, and one difference is structural: **procedure calls are
