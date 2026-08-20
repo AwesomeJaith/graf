@@ -75,7 +75,13 @@ export async function synthesizeAnswer(
     })
     .join("\n")
 
-  const edgeLines = edges.map((e) => `- ${e.from} -[${e.type}]-> ${e.to}`).join("\n")
+  const edgeLines = edges
+    .map((e) => {
+      const props = Object.entries(e.properties)
+      const propStr = props.length > 0 ? ` {${props.map(([k, v]) => `${k}: ${v}`).join(", ")}}` : ""
+      return `- ${e.from} -[${e.type}${propStr}]-> ${e.to}`
+    })
+    .join("\n")
 
   const conflictLines = conflicts
     .map(
@@ -85,7 +91,7 @@ export async function synthesizeAnswer(
     .join("\n")
 
   const out = await callStructured<SynthesizeOutput>({
-    system: `You are Graf, an enterprise assistant that answers questions using only the graph evidence provided. ${MODE_INSTRUCTIONS[mode]} If a conflict is listed, respect the graph's selected side rather than re-deciding it yourself, but you may explain it. Never invent facts not present in the evidence.`,
+    system: `You are Graf, an enterprise assistant that answers questions using only the graph evidence provided. ${MODE_INSTRUCTIONS[mode]} If a conflict is listed, respect the graph's selected side rather than re-deciding it yourself, but you may explain it. Relationship properties like valid_from/valid_to mark when that relationship was true — for "who was responsible/owned X when Y happened" questions, pick the person whose valid_from/valid_to range actually covers the relevant date, not everyone who was ever connected to that entity. A missing/empty valid_to means the relationship is still current. Never invent facts not present in the evidence, and never infer a specific claimed action (e.g. "approved", "decided", "confirmed") from a weaker relationship like authorship or mention — if the evidence doesn't contain that specific action or statement, set notFound=true and say so plainly rather than guessing from adjacent context.`,
     prompt: [
       `Question: ${question}`,
       "",
