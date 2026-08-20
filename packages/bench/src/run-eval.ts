@@ -85,7 +85,11 @@ async function main() {
     process.exit(1)
   }
 
-  const questions = loadQuestions(DATA_DIR)
+  // The full corpus names its question file `questions.jsonl`, the committed
+  // sample `questions.sample.jsonl` — so scoring the full-corpus load needs the
+  // filename overridable, not just the directory (same reason
+  // graph-retrieval.ts takes BENCH_QUESTIONS_PATH).
+  const questions = loadQuestions(DATA_DIR, process.env.BENCH_QUESTIONS_FILE ?? "questions.sample.jsonl")
   const answers = loadAnswers(answersPath)
 
   const CONCURRENCY = 6
