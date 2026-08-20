@@ -223,6 +223,24 @@ function isDistinctiveKey(key: string): boolean {
  */
 const MAX_KEY_DECLARERS = 3
 
+/**
+ * How many documents may cite the same key before it's treated as a coincidence
+ * rather than a reference.
+ *
+ * This is the cap that actually fixes over-matching, and it's a different number
+ * from `MAX_KEY_DECLARERS`: only one document has to *declare* `123456` for every
+ * document that happens to *cite* it to get an edge. Auditing the first full load
+ * (`bench:audit:references`) found a single Issue with **7,376 inbound edges** —
+ * 14.6% of all cross-document references pointing at one document about commit
+ * hooks — and ten such hubs absorbing 22.7% of the total.
+ *
+ * Nothing during the node phase can know this number, since it depends on every
+ * other document's link text, so it's measured in a first pass over the links
+ * queue and applied in a second. 200 sits well above the legitimate distribution
+ * (in-degree tails off through the 21-100 band) and below every hub found.
+ */
+const MAX_KEY_FANOUT = Number(process.env.BENCH_MAX_KEY_FANOUT ?? 200)
+
 // ---------------------------------------------------------------------------
 // Write pipeline
 // ---------------------------------------------------------------------------
@@ -650,33 +668,68 @@ async function main() {
   // Cross-document REFERENCES
   // -------------------------------------------------------------------------
   console.log("Resolving cross-document REFERENCES from link text...")
-  const fanout = new Map<string, number>()
-  let referenceCount = 0
-  let pending: RelRow[] = []
 
-  const rl = createInterface({ input: createReadStream(linksPath), crlfDelay: Infinity })
-  for await (const line of rl) {
-    if (!line.trim()) continue
-    const { i: sourceId, l: sourceLabel, t: linkTexts } = JSON.parse(line) as { i: number; l: string; t: string[] }
-    const seen = new Set<number>()
-    for (const text of linkTexts) {
-      for (const token of text.toLowerCase().match(/[a-z0-9_-]{6,}/g) ?? []) {
-        for (const targetId of resolveKey(token)) {
-          if (targetId === sourceId || seen.has(targetId)) continue
-          seen.add(targetId)
-          const labelIdx = labelOfId.get(targetId)
-          if (labelIdx === undefined || labelIdx < 0) continue
-          fanout.set(token, (fanout.get(token) ?? 0) + 1)
-          pending.push({
-            relType: "REFERENCES",
-            sourceLabel,
-            destinationLabel: CONTENT_LABELS[labelIdx]!,
-            row: { id: stableId("references", `${sourceId}|${targetId}`), rel_type: "REFERENCES", sourceId, destinationId: targetId },
-          })
-          referenceCount++
+  /**
+   * Walks the links queue and yields each (source document, resolved key,
+   * target document) triple, so the pass below can be run twice — once to
+   * measure fan-out, once to write only the keys that survive the cap.
+   *
+   * The queue is a local ~36 MB file, so a second pass is far cheaper than
+   * getting this wrong: `keyIndex` maps a key to its declarers, and nothing
+   * during the node phase can know how many *other* documents will end up
+   * citing that key, which is the number that actually distinguishes an
+   * identifier from a coincidence.
+   */
+  async function* resolvedLinks(): AsyncGenerator<{ sourceId: number; sourceLabel: string; token: string; targetId: number }> {
+    const stream = createInterface({ input: createReadStream(linksPath), crlfDelay: Infinity })
+    for await (const line of stream) {
+      if (!line.trim()) continue
+      const { i: sourceId, l: sourceLabel, t: linkTexts } = JSON.parse(line) as { i: number; l: string; t: string[] }
+      const seen = new Set<number>()
+      for (const text of linkTexts) {
+        for (const token of text.toLowerCase().match(/[a-z0-9_-]{6,}/g) ?? []) {
+          for (const targetId of resolveKey(token)) {
+            if (targetId === sourceId || seen.has(targetId)) continue
+            seen.add(targetId)
+            const labelIdx = labelOfId.get(targetId)
+            if (labelIdx === undefined || labelIdx < 0) continue
+            yield { sourceId, sourceLabel, token, targetId }
+          }
         }
       }
     }
+  }
+
+  // Pass 1: how many distinct documents cite each key.
+  const fanout = new Map<string, number>()
+  for await (const link of resolvedLinks()) {
+    fanout.set(link.token, (fanout.get(link.token) ?? 0) + 1)
+  }
+  const overCitedKeys = new Set(
+    Array.from(fanout.entries())
+      .filter(([, n]) => n > MAX_KEY_FANOUT)
+      .map(([key]) => key)
+  )
+  const suppressedEdges = Array.from(overCitedKeys).reduce((sum, key) => sum + (fanout.get(key) ?? 0), 0)
+  console.log(
+    `  ${fanout.size.toLocaleString()} keys resolved; ${overCitedKeys.size.toLocaleString()} cited by more than ` +
+      `${MAX_KEY_FANOUT} documents, suppressing ${suppressedEdges.toLocaleString()} edges.`
+  )
+
+  // Pass 2: write the edges from keys that survived.
+  let referenceCount = 0
+  let pending: RelRow[] = []
+  for await (const { sourceId, sourceLabel, token, targetId } of resolvedLinks()) {
+    if (overCitedKeys.has(token)) continue
+    const labelIdx = labelOfId.get(targetId)!
+    pending.push({
+      relType: "REFERENCES",
+      sourceLabel,
+      destinationLabel: CONTENT_LABELS[labelIdx]!,
+      row: { id: stableId("references", `${sourceId}|${targetId}`), rel_type: "REFERENCES", sourceId, destinationId: targetId },
+    })
+    referenceCount++
+
     if (pending.length >= 20_000) {
       await runSpecs(relSpecs(pending), "references")
       pending = []
@@ -690,8 +743,8 @@ async function main() {
   const topFanout = Array.from(fanout.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15)
   console.log(
     `Resolved ${referenceCount.toLocaleString()} cross-document REFERENCES edges.\n` +
-      `Highest fan-out keys (inspect for false positives):\n` +
-      topFanout.map(([key, n]) => `  ${key}: ${n}`).join("\n")
+      `Highest fan-out keys (${MAX_KEY_FANOUT}+ are suppressed, marked *):\n` +
+      topFanout.map(([key, n]) => `  ${overCitedKeys.has(key) ? "*" : " "} ${key}: ${n}`).join("\n")
   )
 
   // -------------------------------------------------------------------------
