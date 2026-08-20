@@ -155,13 +155,42 @@ Shape alone isn't enough, though. The first full load produced **7,376 edges fro
 identifier; it's the fractional half of Slack thread timestamps like `1699887766.123456`, which the
 tokenizer splits on the dot. Because each key resolved to one target id, all 7,376 documents got an
 edge to whichever document declared the key last: arbitrary, and worse than no edge, since a traversal
-landing on that hub drags an unrelated document into the evidence set. So a key declared by more than
-`MAX_KEY_DECLARERS` (3) documents is dropped entirely, and one declared by 2–3 — an issue and the doc
-written about it, say — links to all of them rather than to an arbitrary winner.
+landing on that hub drags an unrelated document into the evidence set. Two caps fix it, and they are
+different numbers:
 
-`ingest-full.ts` prints its highest-fan-out keys and how many keys were dropped, so the rule can be
-checked rather than trusted, and `bench:verify` prints real `REFERENCES` pairs with both endpoints'
-text.
+- **`MAX_KEY_DECLARERS`** (3) — how many documents may *declare* a key. Beyond that it's a placeholder
+  and is dropped; at 2–3 (an issue and the doc written about it, say) all of them get edges rather than
+  an arbitrary winner.
+- **`MAX_KEY_FANOUT`** (200) — how many documents may *cite* a key. This is the one that actually
+  killed the hub: only one document had to declare `123456`. Nothing during the node phase can know
+  this number, since it depends on every other document's link text, so the references pass walks the
+  local links queue twice — once to measure fan-out, once to write only the keys under the cap.
+
+### Auditing the result
+
+`bench:audit:references` exists because edge *counts* can't distinguish a well-linked corpus from an
+over-matched one — target **in-degree** can. Real references spread thin; an over-matched key builds a
+hub. A whole-graph `GROUP BY` exceeds the 8s read budget at 3M relationships, so it partitions the
+uniformly-hashed id space and aggregates each range on the indexed `id`.
+
+On the current load, after `--prune` removed 11,485 edges into 10 hubs:
+
+```
+39,062 cross-document REFERENCES over 9,550 targets (mean in-degree 4.09)
+  in-degree 1          4,798 targets   12.3% of edges
+  in-degree 2-5        3,258 targets   23.7% of edges
+  in-degree 6-20       1,213 targets   30.5% of edges
+  in-degree 21-100       256 targets   24.8% of edges
+  in-degree 101-1000      25 targets    8.7% of edges
+  in-degree >1000          0 targets    0.0% of edges
+```
+
+`--prune` is the only way to clean a graph loaded before the cap existed, since re-running the ingest
+`MERGE`s edges and can only add them. Prune *before* re-running the references pass, so legitimate
+edges into those same targets get restored.
+
+`ingest-full.ts` also prints its highest-fan-out keys, marking the suppressed ones, and `bench:verify`
+prints real `REFERENCES` pairs with both endpoints' text.
 
 ### Cloud BYOG vs the local node
 
