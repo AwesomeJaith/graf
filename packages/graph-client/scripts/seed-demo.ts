@@ -2,10 +2,12 @@ import "dotenv/config"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { VectorIndex, embedText } from "@workspace/vector-index"
+import { isByogEnabled, runWritesByog } from "../src/byog"
 import { closeDriver, runWrites } from "../src/client"
 import {
   upsertNodesBatch,
   upsertRelationshipsBatch,
+  type QuerySpec,
   type UpsertNodeRow,
   type UpsertRelationshipRow,
 } from "../src/cypher"
@@ -15,7 +17,26 @@ import {
  * ambiguity, multi-hop trace, conflicting launch dates, temporal ownership).
  * This is the deadline safety net: the live demo works off this graph even
  * if bench ingestion isn't finished.
+ *
+ * Honours `GRAF_GRAPH_TRANSPORT=byog`, so the same demo graph can be written to
+ * a HydraDB Cloud collection — which is what a hosted deployment reads, since
+ * it has no way to reach a HydraDB node on a laptop.
  */
+
+/** True when writing to HydraDB Cloud rather than a local node over Bolt. */
+const byog = isByogEnabled()
+
+/**
+ * The two transports disagree about one thing: the cloud's `MERGE` needs the
+ * label inside the pattern, while the self-hosted node's Cypher subset only
+ * accepts a bare `MERGE (n {id})` followed by `SET n:Label` (see
+ * upsertNodesBatch). Everything else about these statements is identical, so
+ * the choice is a flag rather than two code paths.
+ */
+async function writeAll(specs: QuerySpec[]): Promise<void> {
+  if (byog) return runWritesByog(specs)
+  return runWrites(specs)
+}
 
 const persons: UpsertNodeRow[] = [
   {
@@ -194,8 +215,10 @@ async function main() {
     ["Decision", decisions],
   ]
 
-  await runWrites(
-    nodeBatches.map(([label, rows]) => upsertNodesBatch(label, rows))
+  await writeAll(
+    nodeBatches.map(([label, rows]) =>
+      upsertNodesBatch(label, rows, { labelInMergePattern: byog })
+    )
   )
   console.log(
     `Seeded ${nodeBatches.reduce((n, [, rows]) => n + rows.length, 0)} nodes.`
@@ -303,7 +326,7 @@ async function main() {
     ],
   ]
 
-  await runWrites(
+  await writeAll(
     relationshipBatches.map(([relType, sourceLabel, destinationLabel, rows]) =>
       upsertRelationshipsBatch(relType, sourceLabel, destinationLabel, rows)
     )
@@ -312,7 +335,9 @@ async function main() {
     `Seeded ${relationshipBatches.reduce((n, [, , , rows]) => n + rows.length, 0)} relationships.`
   )
 
-  await closeDriver()
+  // Only the Bolt path ever opened a driver; over BYOG this would construct one
+  // just to close it, against a URL the cloud deployment doesn't even have.
+  if (!byog) await closeDriver()
 
   // Embed into the same sidecar vector-index the bench ingestion writes to,
   // so entity resolution has one consistent index across demo + bench data.

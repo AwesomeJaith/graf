@@ -13,9 +13,11 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
+    "@workspace/graph-client": "workspace:*",
     "@workspace/graph-schema": "workspace:*",
     "@workspace/retrieval": "workspace:*",
     "@workspace/ui": "workspace:*",
+    "@workspace/vector-index": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
     "jose": "^6.2.9",

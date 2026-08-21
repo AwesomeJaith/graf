@@ -9,7 +9,14 @@ import type { NextConfig } from "next"
 loadEnv({ path: path.resolve(fileURLToPath(import.meta.url), "../../../.env") })
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@workspace/ui", "@workspace/retrieval", "@workspace/graph-client", "@workspace/graph-schema"],
+  transpilePackages: ["@workspace/ui", "@workspace/retrieval", "@workspace/graph-client", "@workspace/graph-schema", "@workspace/vector-index"],
+  // The embedding index is read from disk at runtime through a path that only
+  // exists in an env var, so nothing in the module graph points at it and file
+  // tracing would leave it out of the serverless bundle — the deployment would
+  // build fine and then answer every question with an empty index.
+  outputFileTracingIncludes: {
+    "/api/**": ["./data/**"],
+  },
   // neo4j-driver does raw Buffer manipulation for the Bolt binary protocol —
   // bundling it through Turbopack corrupts that (RangeError on session.run).
   // Keep it as a native require() instead.

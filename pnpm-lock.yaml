@@ -38,6 +38,9 @@ importers:
       '@base-ui/react':
         specifier: ^1.7.0
         version: 1.7.0(@types/react@19.2.15)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@workspace/graph-client':
+        specifier: workspace:*
+        version: link:../../packages/graph-client
       '@workspace/graph-schema':
         specifier: workspace:*
         version: link:../../packages/graph-schema
@@ -47,6 +50,9 @@ importers:
       '@workspace/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@workspace/vector-index':
+        specifier: workspace:*
+        version: link:../../packages/vector-index
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3

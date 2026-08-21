@@ -42,11 +42,13 @@ function LoginForm() {
       className="flex w-full max-w-xs flex-col gap-3"
     >
       <div className="mb-1 flex flex-col items-center gap-2">
-        {/* The same mark the app renders next to every assistant message, and
-            the same one baked into app/icon.svg — generated from the name
-            rather than a separate asset, so there's one drawing to keep. */}
-        <Avatar alt="Graf" size={48} />
-        <span className="text-2xl font-semibold tracking-tight">Graf</span>
+        <div className="flex items-center gap-2.5">
+          {/* The same mark the app renders next to every assistant message, and
+              the same one baked into app/icon.svg — generated from the name
+              rather than a separate asset, so there's one drawing to keep. */}
+          <Avatar alt="Graf" size={36} />
+          <span className="text-2xl font-semibold tracking-tight">Graf</span>
+        </div>
         <p className="text-sm text-muted-foreground">Graph-native enterprise knowledge assistant.</p>
       </div>
       <input
