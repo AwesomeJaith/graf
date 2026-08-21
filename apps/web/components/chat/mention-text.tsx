@@ -16,6 +16,14 @@ const MENTION_PATTERN = /@\[([^\]]+)\]/g
  * three sides: a badge that opens or closes a line sits exactly one inset from
  * that edge, the same distance as from the top. Mid-sentence separation comes
  * from the spaces already in the text either side of the token.
+ *
+ * No font-size and no vertical padding, both deliberate. Inheriting the
+ * bubble's size and its (unitless, so ratio-inherited) line-height makes the
+ * badge box exactly the line's strut — 14px text in a 20px box — so it sits on
+ * the surrounding baseline without pushing its line taller than its
+ * neighbours. Any vertical padding would break that: an inline-flex box is
+ * baseline-aligned on its content, so padding grows the line box around it and
+ * the badge stops sharing a line with the text either side of it.
  */
 export function MentionText({ text }: { text: string }) {
   const parts = text.split(MENTION_PATTERN)
@@ -26,7 +34,7 @@ export function MentionText({ text }: { text: string }) {
         i % 2 === 1 ? (
           <span
             key={i}
-            className="inline-flex items-center rounded-[calc(var(--radius)*1.8-0.625rem)] bg-[image:var(--brand-gradient-soft)] px-1.5 py-0.5 text-[0.85em] font-medium text-white"
+            className="inline-flex items-center rounded-[calc(var(--radius)*1.8-0.625rem)] bg-[image:var(--brand-gradient-soft)] px-1.5 font-medium text-white"
           >
             @{part}
           </span>
