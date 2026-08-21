@@ -14,6 +14,16 @@ export function promptAnchorId(messageId: string): string {
 }
 
 /**
+ * Tick geometry, in px, because the highlight is positioned by arithmetic on it
+ * rather than by flow — see the comment on the moving bar below.
+ */
+const TICK_HEIGHT = 3
+const TICK_GAP = 8
+const TICK_STEP = TICK_HEIGHT + TICK_GAP
+const TICK_WIDTH = 20
+const ACTIVE_WIDTH = 28
+
+/**
  * A vertical rail of tick marks pinned to the edge of the transcript, one per
  * question asked, that expands into the questions themselves on hover.
  *
@@ -40,6 +50,7 @@ export function PromptRail({
 }) {
   const prompts = React.useMemo(() => messages.filter((m) => m.role === "user"), [messages])
   const [expanded, setExpanded] = React.useState(false)
+  const activeIndex = prompts.findIndex((m) => m.id === activeMessageId)
 
   // One question is the one you're looking at; there's nothing to jump back to.
   if (prompts.length < 2) return null
@@ -99,32 +110,41 @@ export function PromptRail({
         // Padded well past the marks themselves: 3px-tall ticks are a hopeless
         // hover target, and the padding is what makes the rail a strip you can
         // move at rather than a row of hairlines you have to hit.
-        <div className="flex flex-col items-end gap-2 py-2 pr-1.5 pl-6">
-          {prompts.map((message) => (
-            // `rounded-full` on a 3px bar is a 1.5px cap on each end — the whole
-            // point of giving the ticks height rather than leaving them
-            // hairlines, since a 1px rule has nothing for a radius to round.
-            // Animated here rather than with a CSS transition because moving the
-            // highlight animates two ticks at once, and motion retargets a
-            // half-finished tick from wherever it currently is instead of
-            // restarting its timing function from the new start value — a fast
-            // scroll crosses several questions, so ticks routinely get
-            // reassigned mid-flight.
-            //
-            // Dimmed rather than recoloured: opacity is a number motion can
-            // interpolate, where the `bg-muted-foreground/60` it replaces is a
-            // `var(--color-*)` string it can't. 0.5 of the foreground is about
-            // where that token landed against this background anyway.
-            <motion.span
-              key={message.id}
-              className="h-[3px] rounded-full bg-foreground"
-              // No entry animation — a tick should appear at its resting size,
-              // and on first paint every one of them would otherwise grow in.
-              initial={false}
-              animate={message.id === activeMessageId ? { width: 28, opacity: 1 } : { width: 20, opacity: 0.5 }}
-              transition={{ duration: 0.12, ease: "easeOut" }}
-            />
-          ))}
+        <div className="py-2 pr-1.5 pl-6">
+          <div className="relative flex flex-col items-end" style={{ rowGap: TICK_GAP }}>
+            {/* `rounded-full` on a 3px bar is a 1.5px cap on each end — the
+                whole point of giving the ticks height rather than leaving them
+                hairlines, since a 1px rule has nothing for a radius to round. */}
+            {prompts.map((message) => (
+              <span
+                key={message.id}
+                className="rounded-full bg-foreground/50"
+                style={{ height: TICK_HEIGHT, width: TICK_WIDTH }}
+              />
+            ))}
+            {/* One bar that moves, rather than every tick animating its own
+                width. Crossing eight questions was eight grow/shrink pairs
+                firing in sequence — a ripple down the rail whose length grew
+                with the distance travelled. As a single element the move is one
+                animation of fixed duration however far it goes, which is also
+                why the ticks are laid out on a px grid: this is positioned by
+                `index * step` rather than by flow.
+
+                Opaque and wider than the tick it covers, so it reads as that
+                tick having grown rather than as something laid over it. */}
+            {activeIndex >= 0 && (
+              <motion.span
+                aria-hidden
+                className="absolute top-0 right-0 rounded-full bg-foreground"
+                style={{ height: TICK_HEIGHT, width: ACTIVE_WIDTH }}
+                // Skips the entry animation, so the bar doesn't slide down from
+                // the first question on mount.
+                initial={false}
+                animate={{ y: activeIndex * TICK_STEP }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              />
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -78,6 +78,11 @@ export default function Page() {
     const container = scrollRef.current
     const target = document.getElementById(promptAnchorId(messageId))
     if (!container || !target) return
+    // Set directly rather than waiting for the scroll to report it: a short
+    // thread, or a question already at the clearance line, scrolls nowhere at
+    // all — no scroll event, so the rail would sit unmoved on a click that did
+    // land. Anything that does scroll re-derives this a frame later anyway.
+    setActivePromptId(messageId)
     const delta = target.getBoundingClientRect().top - container.getBoundingClientRect().top
     container.scrollTo({ top: Math.max(0, container.scrollTop + delta - JUMP_CLEARANCE), behavior: "smooth" })
   }
