@@ -240,8 +240,17 @@ export async function resolveEntities(
     inputSchema: RANK_SCHEMA,
   })
 
+  // `resolutions` is required and typed as an array by RANK_SCHEMA, but a
+  // structured response is still model output — a violating shape (the key
+  // missing, or an object keyed by mention) reached `.find` and took the whole
+  // request down with a 500. Degrading to "nothing ranked" instead leaves every
+  // mention on its vector-search order, which is the input this stage re-ranks,
+  // so the answer is weaker rather than absent. Seen for real when swapping the
+  // chat model: how strictly a tool schema is honoured varies between them.
+  const rankedResolutions = Array.isArray(ranked?.resolutions) ? ranked.resolutions : []
+
   return nonEmptyPools.map((pool) => {
-    const rankedEntry = ranked.resolutions.find((r) => r.mention === pool.mention)
+    const rankedEntry = rankedResolutions.find((r) => r.mention === pool.mention)
     const byId = new Map(pool.candidates.map((c) => [c.id, c]))
     const override = overrides.find((o) => o.mention === pool.mention)
 
