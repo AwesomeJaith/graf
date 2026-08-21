@@ -6,7 +6,19 @@ import { fileURLToPath } from "node:url"
 import { terminalResult } from "../trace-types"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const DB_PATH = process.env.GRAF_DB_PATH ?? join(__dirname, "..", "..", "..", "..", ".data", "graf.db")
+
+/**
+ * A serverless deployment has a read-only filesystem apart from `/tmp`, so the
+ * repo-relative default can't be created there at all. `/tmp` survives for the
+ * life of a warm instance, which is enough for chat history to behave normally
+ * within a session — but it is per-instance and not durable, so a hosted demo
+ * can lose old threads. Persisting them properly means a hosted database, which
+ * is a bigger change than the demo needs.
+ */
+const DEFAULT_DB_PATH = process.env.VERCEL
+  ? "/tmp/graf.db"
+  : join(__dirname, "..", "..", "..", "..", ".data", "graf.db")
+const DB_PATH = process.env.GRAF_DB_PATH ?? DEFAULT_DB_PATH
 
 let db: Database.Database | undefined
 
