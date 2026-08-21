@@ -14,8 +14,8 @@ and edges that support it.
 
 ## Live demo
 
-**https://graf-tau.vercel.app** — password `REDACTED` (shared password,
-one field; see [Deployment](#deployment)).
+**https://graf-tau.vercel.app** — one shared password, supplied with the
+submission rather than committed here (see [Deployment](#deployment)).
 
 Four **verbatim EnterpriseRAG-Bench questions** sit above the chat box — one
 each for a conflict between sources, a multi-constraint lookup, an exhaustive
