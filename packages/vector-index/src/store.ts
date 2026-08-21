@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs"
 
 /**
  * HydraDB has no native vector/fulltext search (see cypher-compat.md), so
@@ -140,6 +140,40 @@ function siblingPaths(path: string): { metaPath: string; vectorsPath: string } {
   return { metaPath: `${base}.meta.jsonl`, vectorsPath: `${base}.vectors.bin` }
 }
 
+/** 512 MiB. Any value under 2 GiB works; this one keeps the loop short. */
+const READ_CHUNK_BYTES = 512 * 1024 * 1024
+
+/**
+ * `readFileSync` refuses anything over 2 GiB — not a memory limit but a cap on
+ * the single buffer it allocates internally — and the full corpus is ~3.2 GB
+ * (772k × 1024 × float32). So allocate the destination up front and fill it
+ * with positioned reads.
+ *
+ * It has to be one allocation rather than a list of chunks: every entry's
+ * vector is a zero-copy Float32Array view into this buffer, and a view can't
+ * straddle two of them. `ArrayBuffer` has no 2 GiB ceiling of its own, so the
+ * cap only ever applied to how the bytes were fetched.
+ */
+function readLargeFile(path: string): ArrayBuffer {
+  const byteLength = statSync(path).size
+  const buffer = new ArrayBuffer(byteLength)
+  // Zero-copy window onto `buffer`, because readSync only writes into a Buffer.
+  const window = Buffer.from(buffer)
+  const fd = openSync(path, "r")
+  try {
+    let offset = 0
+    while (offset < byteLength) {
+      const read = readSync(fd, window, offset, Math.min(READ_CHUNK_BYTES, byteLength - offset), offset)
+      // A short read before EOF is legal; zero bytes means the file ended early.
+      if (read === 0) throw new Error(`${path}: expected ${byteLength} bytes, file ended at ${offset}`)
+      offset += read
+    }
+  } finally {
+    closeSync(fd)
+  }
+  return buffer
+}
+
 export class VectorIndex {
   private entries: StoredVector[] = []
   // id -> index into `entries`, so upsert/lookup is O(1) instead of a linear
@@ -236,12 +270,12 @@ export class VectorIndex {
     if (!existsSync(metaPath) || !existsSync(vectorsPath)) return
     const { dim } = JSON.parse(readFileSync(path, "utf-8")) as { count: number; dim: number }
     const metaLines = readFileSync(metaPath, "utf-8").split("\n").filter(Boolean)
-    const vectorsBuffer = readFileSync(vectorsPath)
+    const vectorsBuffer = readLargeFile(vectorsPath)
     this.entries = []
     this.byId.clear()
     metaLines.forEach((line, i) => {
       const meta = JSON.parse(line) as { id: number; label: string; primaryText: string }
-      const vector = new Float32Array(vectorsBuffer.buffer, vectorsBuffer.byteOffset + i * dim * 4, dim)
+      const vector = new Float32Array(vectorsBuffer, i * dim * 4, dim)
       this.byId.set(meta.id, this.entries.length)
       this.entries.push({ ...meta, vector, norm: norm(vector) })
     })
