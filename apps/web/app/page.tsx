@@ -129,8 +129,11 @@ export default function Page() {
     }
   }
 
-  function stopTurn(pendingId: string) {
-    abortersRef.current.get(pendingId)?.abort()
+  // Aborts everything in flight, not one turn: the composer's stop is a single
+  // control for the whole thread, and a turn can be started from an entity chip
+  // on an older answer, so there isn't always a "last" one to single out.
+  function stopPending() {
+    for (const aborter of abortersRef.current.values()) aborter.abort()
   }
 
   function handleSubmit(text: string) {
@@ -192,7 +195,6 @@ export default function Page() {
                     key={m.id}
                     message={m}
                     onSelectEntity={(mention, candidateId, label) => handleSelectEntity(m.text, mention, candidateId, label)}
-                    onStop={() => stopTurn(m.id)}
                     showReasoningByDefault={showReasoningByDefault}
                     showEvidenceByDefault={showEvidenceByDefault}
                   />
@@ -219,7 +221,17 @@ export default function Page() {
 
         <div className="px-5 pb-5">
           <div className="mx-auto max-w-3xl">
-            <ChatInput mode={mode} onModeChange={setMode} onSubmit={handleSubmit} disabled={!activeId} />
+            <ChatInput
+              mode={mode}
+              onModeChange={setMode}
+              onSubmit={handleSubmit}
+              disabled={!activeId}
+              // Derived from the messages rather than tracked separately, so the
+              // button can't disagree with the transcript — including after a
+              // reload, where a turn's pending flag comes back from the DB.
+              pending={messages.some((m) => m.pending)}
+              onStop={stopPending}
+            />
           </div>
         </div>
       </div>

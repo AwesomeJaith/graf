@@ -29,13 +29,11 @@ export function UserTurn({ message, id }: { message: ChatMessage; id?: string })
 export function AssistantTurn({
   message,
   onSelectEntity,
-  onStop,
   showReasoningByDefault = true,
   showEvidenceByDefault = false,
 }: {
   message: ChatMessage
   onSelectEntity?: (mention: string, candidateId: string, label: string) => void
-  onStop?: () => void
   showReasoningByDefault?: boolean
   showEvidenceByDefault?: boolean
 }) {
@@ -46,27 +44,7 @@ export function AssistantTurn({
     <div className="flex gap-3">
       <Avatar alt="Graf" size={28} className="mt-0.5 shrink-0 bg-primary/20" />
       <div className="min-w-0 flex-1 space-y-3">
-        {message.pending && (
-          // Beside the ticker rather than down by the composer: a turn can be
-          // started from an entity chip on an older answer, so "the pending
-          // one" isn't necessarily the last thing in the thread — the stop has
-          // to sit on the turn it stops.
-          <div className="flex items-center gap-2">
-            <StageTicker />
-            <button
-              type="button"
-              onClick={onStop}
-              aria-label="Stop generating"
-              title="Stop generating"
-              className="grid size-5 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              {/* A square, drawn rather than an icon import, because at this
-                  size lucide's Square is a stroked outline where the universal
-                  stop glyph is a filled block. */}
-              <span aria-hidden className="size-1.5 rounded-[1px] bg-current" />
-            </button>
-          </div>
-        )}
+        {message.pending && <StageTicker />}
 
         {result && (
           <>

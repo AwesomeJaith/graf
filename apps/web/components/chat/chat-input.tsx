@@ -25,6 +25,9 @@ interface ChatInputProps {
   onModeChange: (mode: ResponseMode) => void
   onSubmit: (text: string) => void
   disabled?: boolean
+  /** A turn is in flight, so the send button becomes the stop button. */
+  pending?: boolean
+  onStop?: () => void
 }
 
 /**
@@ -51,7 +54,7 @@ function findMentionAtCursor(text: string, cursor: number): { start: number; que
   return { start: at, query }
 }
 
-export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputProps) {
+export function ChatInput({ mode, onModeChange, onSubmit, disabled, pending, onStop }: ChatInputProps) {
   const [value, setValue] = React.useState("")
   const [mention, setMention] = React.useState<{ start: number; query: string } | null>(null)
   const [candidates, setCandidates] = React.useState<MentionCandidate[]>([])
@@ -106,7 +109,11 @@ export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputP
 
   function submit() {
     const text = value.trim()
-    if (!text || disabled) return
+    // `pending` blocks Enter as well as the button. The send affordance isn't
+    // just disabled while a turn runs, it's been replaced by stop — so a key
+    // that still sent would be doing something the composer no longer offers.
+    // The text stays in the box either way, so nothing is lost by waiting.
+    if (!text || disabled || pending) return
     onSubmit(text)
     setValue("")
     setMention(null)
@@ -171,19 +178,30 @@ export function ChatInput({ mode, onModeChange, onSubmit, disabled }: ChatInputP
             </Button>
           ))}
         </div>
-        {/* Brand gradient fill rather than the flat `bg-primary` the default
+        {/* One button that changes job rather than two side by side: while a
+            turn runs there's nothing to send, and stop is the only thing you'd
+            reach for here, so it takes the primary slot the eye is already on.
+            Keeping the gradient across both states is deliberate — the slot is
+            the composer's primary action either way, and recolouring it would
+            read as a different control appearing rather than this one changing.
+
+            Brand gradient fill rather than the flat `bg-primary` the default
             variant gives. The variant's `hover:bg-primary/80` can't show
             through an opaque background-image, so the hover affordance becomes
             brightness instead of colour (`transition-all` already animates it). */}
         <Button
           type="button"
           size="icon"
-          onClick={submit}
-          disabled={disabled || !value.trim()}
-          aria-label="Send"
+          onClick={pending ? onStop : submit}
+          // Never disabled while pending: the whole point of stop is to be
+          // reachable, and an empty box is the normal state after sending.
+          disabled={!pending && (disabled || !value.trim())}
+          aria-label={pending ? "Stop generating" : "Send"}
           className="bg-[image:var(--brand-gradient)] hover:brightness-110"
         >
-          <ArrowUp />
+          {/* Drawn rather than lucide's `Square`, which is a stroked outline at
+              this size where the universal stop glyph is a filled block. */}
+          {pending ? <span aria-hidden className="size-2.5 rounded-[2px] bg-current" /> : <ArrowUp />}
         </Button>
       </div>
     </div>
