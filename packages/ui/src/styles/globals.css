@@ -119,6 +119,11 @@
         color-mix(in oklab, var(--brand-1) 80%, transparent) 0%,
         color-mix(in oklab, var(--brand-2) 80%, transparent) 55%
     );
+    /* The midpoint of the logo's gradient, yellow-lifted so it lands on a
+       bright orange rather than the muddy brick a straight 50/50 of #f6c750 and
+       #e63525 gives. Used for text selection: vivid enough to read as the brand
+       mark while still letting white glyphs sit on top of it. */
+    --brand-orange: color-mix(in oklab, var(--brand-1) 40%, var(--brand-2));
     --sidebar: #262626;
     --sidebar-foreground: #ededed;
     --sidebar-primary: #d74c26;
@@ -175,6 +180,15 @@
     }
   html {
     scrollbar-color: var(--border) var(--background);
+    }
+  /* Kept a touch translucent so the selected text keeps some of the surface it
+     was sitting on — a fully opaque bar would flatten a message bubble and the
+     background behind it into one block. White text rather than inherited,
+     because the orange is light enough that the near-white foreground alone
+     would sit at roughly the same luminance as the highlight. */
+  ::selection {
+    background-color: color-mix(in oklab, var(--brand-orange) 60%, transparent);
+    color: #fff;
     }
   ::-webkit-scrollbar {
     width: 10px;

@@ -42,7 +42,7 @@ export function MentionText({ text }: { text: string }) {
         i % 2 === 1 ? (
           <span
             key={i}
-            className="inline-flex items-center rounded-[calc(var(--radius)*1.8-0.625rem)] bg-[image:var(--brand-gradient-soft)] px-1.5 font-medium text-white"
+            className="inline-flex items-center rounded-[calc(var(--radius)*1.8-0.625rem)] bg-[image:var(--brand-gradient-soft)] px-1 font-medium text-white"
           >
             @{part}
           </span>

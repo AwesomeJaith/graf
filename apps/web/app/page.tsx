@@ -25,10 +25,51 @@ export default function Page() {
   const [showEvidenceByDefault, setShowEvidenceByDefault] = useEvidenceSetting()
   const scrollRef = React.useRef<HTMLDivElement>(null)
 
-  const messages = active?.messages ?? []
+  // Memoised so the fallback isn't a fresh array identity every render: two
+  // effects below key off `messages`, and one of them subscribes to scroll —
+  // without this it would tear down and re-attach that listener continuously.
+  const messages = React.useMemo(() => active?.messages ?? [], [active])
+  const [activePromptId, setActivePromptId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
+  }, [messages])
+
+  // Which question the rail fills in: the last one scrolled past the top fade,
+  // i.e. the one whose answer you're reading. Measured on scroll rather than
+  // with an IntersectionObserver because the interesting line is a fixed offset
+  // into the container, not a share of the element being visible — a question
+  // whose answer runs several screens long stays current the whole way down,
+  // and its own bubble is long gone off the top by then.
+  React.useEffect(() => {
+    const container = scrollRef.current
+    if (!container) return
+    let frame = 0
+    const update = () => {
+      frame = 0
+      const top = container.getBoundingClientRect().top
+      let current: string | null = null
+      for (const m of messages) {
+        if (m.role !== "user") continue
+        const el = document.getElementById(promptAnchorId(m.id))
+        if (!el) continue
+        if (el.getBoundingClientRect().top - top > JUMP_CLEARANCE + 1) break
+        current = m.id
+      }
+      // Nothing scrolled past yet means we're at the top, on the first question.
+      setActivePromptId(current ?? messages.find((m) => m.role === "user")?.id ?? null)
+    }
+    const onScroll = () => {
+      // Coalesced to one measurement per frame: this reads layout for every
+      // question in the thread, and scroll fires far more often than that.
+      if (!frame) frame = requestAnimationFrame(update)
+    }
+    container.addEventListener("scroll", onScroll)
+    update()
+    return () => {
+      container.removeEventListener("scroll", onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
   }, [messages])
 
   // Measured against the container's own rect rather than `offsetTop`, which
@@ -109,25 +150,13 @@ export default function Page() {
       />
 
       <div className="flex flex-1 flex-col">
-        {/* The rail is centred on the same `max-w-3xl` column as the messages,
-            so a pill sits over the thread it navigates. That means it can't
-            share a flex row with the settings button without being pushed
-            off-centre by it, hence the absolute placement. */}
-        {/* `min-h-14` because the settings button is out of flow: without it the
-            header would collapse to nothing on a conversation with too few
-            questions to draw a rail for. */}
-        <header className="relative flex min-h-14 items-center px-5 py-3.5">
-          <div className="mx-auto w-full max-w-3xl pr-10">
-            <PromptRail messages={messages} onJump={jumpToPrompt} />
-          </div>
-          <div className="absolute top-1/2 right-5 -translate-y-1/2">
-            <SettingsMenu
-              showReasoningByDefault={showReasoningByDefault}
-              onShowReasoningByDefaultChange={setShowReasoningByDefault}
-              showEvidenceByDefault={showEvidenceByDefault}
-              onShowEvidenceByDefaultChange={setShowEvidenceByDefault}
-            />
-          </div>
+        <header className="flex items-center justify-end px-5 py-3.5">
+          <SettingsMenu
+            showReasoningByDefault={showReasoningByDefault}
+            onShowReasoningByDefaultChange={setShowReasoningByDefault}
+            showEvidenceByDefault={showEvidenceByDefault}
+            onShowEvidenceByDefaultChange={setShowEvidenceByDefault}
+          />
         </header>
 
         {/* `min-h-0` so the scroller, not this wrapper, is what overflows: a
@@ -169,6 +198,11 @@ export default function Page() {
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-background to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_bottom,black_35%,transparent)]"
           />
+          {/* Overlays the transcript at its right edge, and lives in this
+              wrapper rather than the header so it centres on the scroller it
+              indexes — a header-mounted rail would be a column of ticks with no
+              relationship to where they point. */}
+          <PromptRail messages={messages} activeMessageId={activePromptId} onJump={jumpToPrompt} />
         </div>
 
         <div className="px-5 pb-5">
