@@ -100,11 +100,14 @@ export function PromptRail({
         // move at rather than a row of hairlines you have to hit.
         <div className="flex flex-col items-end gap-2 py-2 pr-1.5 pl-6">
           {prompts.map((message) => (
+            // `rounded-full` on a 3px bar is a 1.5px cap on each end — the whole
+            // point of giving the ticks height rather than leaving them
+            // hairlines, since a 1px rule has nothing for a radius to round.
             <span
               key={message.id}
               className={cn(
-                "h-px rounded-full transition-all",
-                message.id === activeMessageId ? "w-5 bg-foreground" : "w-3.5 bg-muted-foreground/60"
+                "h-[3px] rounded-full transition-all",
+                message.id === activeMessageId ? "w-7 bg-foreground" : "w-5 bg-muted-foreground/60"
               )}
             />
           ))}
