@@ -34,6 +34,14 @@ export async function callStructured<T = unknown>(opts: {
   toolDescription: string
   inputSchema: Record<string, unknown>
   config?: LlmConfig
+  /**
+   * Aborts the in-flight Converse call. Worth carrying all the way down here
+   * rather than only checking between stages: synthesis is the longest single
+   * call in a turn, so most of the time a cancel lands, it lands inside one of
+   * these — and an un-aborted call keeps burning tokens against the account's
+   * rate limit long after nothing is listening for the answer.
+   */
+  signal?: AbortSignal
 }): Promise<T> {
   const config = opts.config ?? loadLlmConfig()
   const messages: Message[] = [{ role: "user", content: [{ text: opts.prompt }] }]
@@ -55,7 +63,8 @@ export async function callStructured<T = unknown>(opts: {
         ],
         toolChoice: { tool: { name: opts.toolName } },
       },
-    })
+    }),
+    { abortSignal: opts.signal }
   )
 
   const content = response.output?.message?.content ?? []

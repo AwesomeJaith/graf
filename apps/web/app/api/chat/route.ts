@@ -121,9 +121,17 @@ export async function POST(request: Request) {
 
   try {
     const overrides: EntityOverride[] = body.overrides ?? []
-    const result = await answerQuestion(body.question, (body.mode ?? "normal") as PipelineMode, overrides)
+    // `request.signal` fires on client disconnect as well as on an explicit
+    // stop, so the pipeline stops rather than finishing a ~30s turn into a
+    // socket nobody is reading — which on a rate-limited account is the
+    // difference between a cancel freeing capacity and a cancel costing it.
+    const result = await answerQuestion(body.question, (body.mode ?? "normal") as PipelineMode, overrides, request.signal)
     return Response.json(toUiResult(result))
   } catch (err) {
+    // An abort isn't a failure, and the client that caused it has already
+    // stopped listening — so no log line and no error body, both of which
+    // would only be noise. 499 is nginx's "client closed request".
+    if (request.signal.aborted) return new Response(null, { status: 499 })
     console.error("chat pipeline failed", err)
     return Response.json({ error: err instanceof Error ? err.message : "Pipeline failed." }, { status: 500 })
   }

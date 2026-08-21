@@ -88,8 +88,9 @@ const RANK_SCHEMA = {
   required: ["resolutions"],
 }
 
-export async function planQuery(question: string, schema: GraphSchema): Promise<QueryPlan> {
+export async function planQuery(question: string, schema: GraphSchema, signal?: AbortSignal): Promise<QueryPlan> {
   return callStructured<QueryPlan>({
+    signal,
     system:
       "You extract entity references and traversal hints from a question about an enterprise knowledge graph. Only use labels and relationship types that exist in the provided schema.",
     prompt: `${describeSchema(schema)}\n\nQuestion: ${question}`,
@@ -199,7 +200,8 @@ export async function resolveEntities(
   question: string,
   plan: QueryPlan,
   schema: GraphSchema,
-  overrides: EntityOverride[] = []
+  overrides: EntityOverride[] = [],
+  signal?: AbortSignal
 ): Promise<EntityResolution[]> {
   if (plan.mentions.length === 0) return []
 
@@ -232,6 +234,7 @@ export async function resolveEntities(
     .join("\n\n")
 
   const ranked = await callStructured<RankOutput>({
+    signal,
     system:
       "You resolve ambiguous entity mentions in a question to specific graph node ids, using the question's context to disambiguate. Mentions in the same question are often directly connected in the graph (e.g. a Person who WORKS_ON the Project also named in the question) — weigh a candidate's `connectsTo` graph neighbors against the other mentions' candidates, not just name/title similarity.",
     prompt: `Question: ${question}\n\n${rankPrompt}`,

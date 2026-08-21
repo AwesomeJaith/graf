@@ -25,13 +25,22 @@ export { searchContent, searchMentions, type MentionCandidate } from "./content-
 export async function answerQuestion(
   question: string,
   mode: ResponseMode = "normal",
-  overrides: EntityOverride[] = []
+  overrides: EntityOverride[] = [],
+  /**
+   * Abandons the turn when the caller stops caring — a closed tab or a pressed
+   * stop button. Passed into the Bedrock calls, which is where nearly all of a
+   * turn's ~30s sits, and re-checked between stages so the non-abortable ones
+   * (graph traversal, the local vector scan) can't carry a dead turn forward
+   * into another model call. Left unthreaded through `embedText`: those are
+   * sub-second, so the check on either side of them is close enough.
+   */
+  signal?: AbortSignal
 ): Promise<AnswerResult> {
   const schema = loadGraphSchema()
 
-  const plan = await planQuery(question, schema)
+  const plan = await planQuery(question, schema, signal)
   const [entityResolutions, contentNodes] = await Promise.all([
-    resolveEntities(question, plan, schema, overrides),
+    resolveEntities(question, plan, schema, overrides, signal),
     searchContent(question, schema),
   ])
 
@@ -69,6 +78,7 @@ export async function answerQuestion(
     }
   }
 
+  signal?.throwIfAborted()
   const { nodes: bareNodes, edges } = await expandGraph(resolvedNodes, schema, plan.focusRelationshipTypes)
   // Document bodies aren't stored in the graph at full-corpus scale (they
   // exhausted the cloud instance's memory and no query ever filters on them) —
@@ -82,10 +92,11 @@ export async function answerQuestion(
   // model's precision on exact figures/names — the full set still drives
   // the trace/UI and conflict detection above.
   const contentIds = nodes.filter((n) => typeof n.properties.dsid === "string").map((n) => n.id)
+  signal?.throwIfAborted()
   const keepContentIds = await rankNodeIdsByRelevance(question, contentIds, 8)
   const synthNodes = nodes.filter((n) => typeof n.properties.dsid !== "string" || keepContentIds.has(n.id))
 
-  const synth = await synthesizeAnswer(question, mode, synthNodes, edges, detected)
+  const synth = await synthesizeAnswer(question, mode, synthNodes, edges, detected, signal)
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const conflictNodeIds = new Set(detected.flatMap((c) => [c.nodeAId, c.nodeBId]))

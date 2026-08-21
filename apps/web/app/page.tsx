@@ -2,7 +2,7 @@
 
 import * as React from "react"
 
-import type { ChatMessage, ChatTurnResult, ResponseMode } from "@/lib/trace-types"
+import { terminalResult, type ChatMessage, type ChatTurnResult, type ResponseMode } from "@/lib/trace-types"
 import { useEvidenceSetting, useReasoningSetting } from "@/lib/use-panel-defaults"
 import { useConversations } from "@/lib/use-conversations"
 import { ChatInput } from "@/components/chat/chat-input"
@@ -24,6 +24,10 @@ export default function Page() {
   const [showReasoningByDefault, setShowReasoningByDefault] = useReasoningSetting()
   const [showEvidenceByDefault, setShowEvidenceByDefault] = useEvidenceSetting()
   const scrollRef = React.useRef<HTMLDivElement>(null)
+  // Keyed by pending message id rather than held as one "current request",
+  // because a turn is startable from an entity chip on an *older* answer — so
+  // several can legitimately be in flight, and stop has to hit the right one.
+  const abortersRef = React.useRef(new Map<string, AbortController>())
 
   // Memoised so the fallback isn't a fresh array identity every render: two
   // effects below key off `messages`, and one of them subscribes to scroll —
@@ -93,38 +97,40 @@ export default function Page() {
     pendingId: string,
     overrides?: { mention: string; candidateId: number; label: string }[]
   ) {
+    const aborter = new AbortController()
+    abortersRef.current.set(pendingId, aborter)
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, mode, overrides }),
+        signal: aborter.signal,
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Request failed")
       const result = data as ChatTurnResult
       updateMessages(conversationId, (prev) => prev.map((m) => (m.id === pendingId ? { ...m, pending: false, result } : m)))
     } catch (err) {
+      // A cancel lands here too — `fetch` rejects on abort — but it isn't an
+      // error, so it says so plainly instead of surfacing "The user aborted a
+      // request." from the platform. Either way the turn stops being pending:
+      // a spinner with nothing behind it is the one outcome to avoid.
+      const cancelled = err instanceof Error && err.name === "AbortError"
+      const answer = cancelled
+        ? "Cancelled."
+        : err instanceof Error
+          ? err.message
+          : "Something went wrong answering that."
       updateMessages(conversationId, (prev) =>
-        prev.map((m) =>
-          m.id === pendingId
-            ? {
-                ...m,
-                pending: false,
-                result: {
-                  reasoning: "",
-                  answer: err instanceof Error ? err.message : "Something went wrong answering that.",
-                  claims: [],
-                  trace: { nodes: [], edges: [] },
-                  entityResolutions: [],
-                  conflicts: [],
-                  stages: [],
-                  notFound: true,
-                },
-              }
-            : m
-        )
+        prev.map((m) => (m.id === pendingId ? { ...m, pending: false, result: terminalResult(answer) } : m))
       )
+    } finally {
+      abortersRef.current.delete(pendingId)
     }
+  }
+
+  function stopTurn(pendingId: string) {
+    abortersRef.current.get(pendingId)?.abort()
   }
 
   function handleSubmit(text: string) {
@@ -186,6 +192,7 @@ export default function Page() {
                     key={m.id}
                     message={m}
                     onSelectEntity={(mention, candidateId, label) => handleSelectEntity(m.text, mention, candidateId, label)}
+                    onStop={() => stopTurn(m.id)}
                     showReasoningByDefault={showReasoningByDefault}
                     showEvidenceByDefault={showEvidenceByDefault}
                   />

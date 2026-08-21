@@ -3,6 +3,8 @@ import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { terminalResult } from "../trace-types"
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = process.env.GRAF_DB_PATH ?? join(__dirname, "..", "..", "..", "..", ".data", "graf.db")
 
@@ -32,5 +34,17 @@ export function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages(conversation_id, position);
   `)
+
+  // A pending turn can't outlive the request that created it: nothing resumes
+  // one, so any row still flagged pending when this process opens the file is
+  // from a request that died — a dev-server restart, a crash, a closed tab.
+  // Left alone it's a permanent spinner in an old thread, since `pending` is
+  // persisted and the client trusts what it loads. Safe to do unconditionally
+  // because this runs once per process, before any request can have written a
+  // pending row of its own.
+  db.prepare("UPDATE messages SET pending = 0, result_json = ? WHERE pending = 1").run(
+    JSON.stringify(terminalResult("Interrupted before this finished."))
+  )
+
   return db
 }

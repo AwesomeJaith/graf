@@ -93,3 +93,26 @@ export interface ChatMessage {
   result?: ChatTurnResult
   pending?: boolean
 }
+
+/**
+ * A turn that produced no evidence, only a sentence: cancelled, interrupted, or
+ * failed. `notFound` is what routes it to the plain-text branch of the turn
+ * renderer, so there's no empty reasoning panel or zero-node graph hung off it.
+ *
+ * Shared because two unrelated paths need to look identical in the transcript —
+ * the client giving up on a fetch, and the server clearing a `pending` row that
+ * outlived its request — and a turn that renders differently depending on which
+ * one stopped it would just read as a bug.
+ */
+export function terminalResult(answer: string): ChatTurnResult {
+  return {
+    reasoning: "",
+    answer,
+    claims: [],
+    trace: { nodes: [], edges: [] },
+    entityResolutions: [],
+    conflicts: [],
+    stages: [],
+    notFound: true,
+  }
+}
