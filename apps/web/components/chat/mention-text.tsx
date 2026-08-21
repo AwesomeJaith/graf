@@ -1,6 +1,14 @@
 const MENTION_PATTERN = /@\[([^\]]+)\]/g
 
 /**
+ * `@[Alex Chen]` → `@Alex Chen`, for places too small to draw a badge in — the
+ * prompt-rail pills. Lives here so the token syntax has one definition.
+ */
+export function stripMentions(text: string): string {
+  return text.replace(MENTION_PATTERN, "@$1")
+}
+
+/**
  * Renders `@[Name]` tokens as a brand-gradient badge with white text;
  * everything else passes through as plain text.
  *

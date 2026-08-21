@@ -26,7 +26,10 @@ export function ConversationSidebar({
         <Avatar alt="Graf" size={22} />
         <span className="text-xl font-semibold">Graf</span>
       </div>
-      <Button variant="outline" size="sm" className="w-full justify-start gap-2" onClick={onNewChat}>
+      {/* `size="default"` is h-7, which is exactly what a conversation row
+          below comes out at (text-xs at 16px between py-1.5); `sm` was h-6 and
+          sat a notch short of them. px-2.5 to match their inset too. */}
+      <Button variant="outline" className="w-full justify-start gap-2 px-2.5" onClick={onNewChat}>
         <SquarePen className="size-3.5" />
         New chat
       </Button>

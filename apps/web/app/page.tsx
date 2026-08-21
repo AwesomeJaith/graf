@@ -8,7 +8,15 @@ import { useConversations } from "@/lib/use-conversations"
 import { ChatInput } from "@/components/chat/chat-input"
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar"
 import { UserTurn, AssistantTurn } from "@/components/chat/message-turn"
+import { PromptRail, promptAnchorId } from "@/components/chat/prompt-rail"
 import { SettingsMenu } from "@/components/chat/settings-menu"
+
+/**
+ * Gap left above a jumped-to question, in px. Matches the `pt-14` on the
+ * message list: land the question where the first message sits, i.e. clear of
+ * the fade rather than under it.
+ */
+const JUMP_CLEARANCE = 56
 
 export default function Page() {
   const { conversations, active, activeId, newChat, selectConversation, deleteConversation, updateMessages } = useConversations()
@@ -22,6 +30,16 @@ export default function Page() {
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages])
+
+  // Measured against the container's own rect rather than `offsetTop`, which
+  // would be relative to whichever ancestor happens to be positioned.
+  function jumpToPrompt(messageId: string) {
+    const container = scrollRef.current
+    const target = document.getElementById(promptAnchorId(messageId))
+    if (!container || !target) return
+    const delta = target.getBoundingClientRect().top - container.getBoundingClientRect().top
+    container.scrollTo({ top: Math.max(0, container.scrollTop + delta - JUMP_CLEARANCE), behavior: "smooth" })
+  }
 
   async function runQuery(
     conversationId: string,
@@ -91,13 +109,25 @@ export default function Page() {
       />
 
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-end px-5 py-3.5">
-          <SettingsMenu
-            showReasoningByDefault={showReasoningByDefault}
-            onShowReasoningByDefaultChange={setShowReasoningByDefault}
-            showEvidenceByDefault={showEvidenceByDefault}
-            onShowEvidenceByDefaultChange={setShowEvidenceByDefault}
-          />
+        {/* The rail is centred on the same `max-w-3xl` column as the messages,
+            so a pill sits over the thread it navigates. That means it can't
+            share a flex row with the settings button without being pushed
+            off-centre by it, hence the absolute placement. */}
+        {/* `min-h-14` because the settings button is out of flow: without it the
+            header would collapse to nothing on a conversation with too few
+            questions to draw a rail for. */}
+        <header className="relative flex min-h-14 items-center px-5 py-3.5">
+          <div className="mx-auto w-full max-w-3xl pr-10">
+            <PromptRail messages={messages} onJump={jumpToPrompt} />
+          </div>
+          <div className="absolute top-1/2 right-5 -translate-y-1/2">
+            <SettingsMenu
+              showReasoningByDefault={showReasoningByDefault}
+              onShowReasoningByDefaultChange={setShowReasoningByDefault}
+              showEvidenceByDefault={showEvidenceByDefault}
+              onShowEvidenceByDefaultChange={setShowEvidenceByDefault}
+            />
+          </div>
         </header>
 
         {/* `min-h-0` so the scroller, not this wrapper, is what overflows: a
@@ -116,7 +146,7 @@ export default function Page() {
               )}
               {messages.map((m) =>
                 m.role === "user" ? (
-                  <UserTurn key={m.id} message={m} />
+                  <UserTurn key={m.id} message={m} id={promptAnchorId(m.id)} />
                 ) : (
                   <AssistantTurn
                     key={m.id}

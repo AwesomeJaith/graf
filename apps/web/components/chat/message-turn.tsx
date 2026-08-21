@@ -11,9 +11,10 @@ import { MentionText } from "./mention-text"
 import { ReasoningPanel } from "./reasoning-panel"
 import { StageTicker } from "./stage-ticker"
 
-export function UserTurn({ message }: { message: ChatMessage }) {
+export function UserTurn({ message, id }: { message: ChatMessage; id?: string }) {
   return (
-    <div className="flex justify-end gap-3">
+    // `id` is the anchor the prompt rail scrolls to — see promptAnchorId.
+    <div id={id} className="flex justify-end gap-3">
       {/* Uniform inset, not the usual wider-than-tall pair: the mention badges
           inside are inline boxes that can touch any edge, so an even inset is
           what makes their surrounding gap even, and it's the term the badge's
