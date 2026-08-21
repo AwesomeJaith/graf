@@ -17,15 +17,22 @@ and edges that support it.
 **https://graf-tau.vercel.app** — password `REDACTED` (shared password,
 one field; see [Deployment](#deployment)).
 
-Try *"What did Sam decide about the Atlas launch?"*, then click a sentence in
-the answer.
+Four **verbatim EnterpriseRAG-Bench questions** sit above the chat box — one
+each for a conflict between sources, a multi-constraint lookup, an exhaustive
+count, and a question the corpus can't answer (the answer should decline).
+Click one, then click a sentence in the answer to see the subgraph behind it.
+Answers take 25-55s; almost all of that is LLM latency, not retrieval.
 
-The hosted deployment runs against the small hand-authored demo graph in
-HydraDB Cloud, **not** the 511,962-document benchmark corpus — the corpus needs
-a 3.2 GB embedding index resident in memory, which no serverless function can
-hold (again, see [Deployment](#deployment)). The full-corpus numbers below come
-from running the same pipeline locally against the same HydraDB Cloud account.
-Answers take 20-40s: most of that is LLM latency, not retrieval.
+What's loaded there is the benchmark's curated 135-document slice (417 embedded
+nodes) plus the hand-authored *Sam / Atlas* demo graph, which is also worth a
+question — *"What did Sam decide about the Atlas launch?"* is the shortest path
+to seeing ambiguity resolution, a `SUPERSEDES` edge and a conflict in one
+answer.
+
+It is **not** the full 511,962-document corpus: that needs a 3.2 GB embedding
+index resident in memory, which no serverless function can hold (see
+[Deployment](#deployment)). The full-corpus numbers below come from running the
+same pipeline locally against the same HydraDB Cloud account.
 
 ## Why HydraDB, not just a vector store
 
@@ -235,10 +242,26 @@ vectors, plus 103 MB of metadata and a 2.5 GB body-text sidecar, against a
 250 MB unzipped function limit. Trimming to entities only (Person +
 Organization + Project + Channel, 260,168 vectors) still lands at ~1.04 GB,
 and brute-force cosine needs the whole thing resident anyway. A corpus that
-size needs a long-lived host, not a function — so the hosted deployment reads
-a 16-node HydraDB Cloud collection and a committed 67 KB index
-(`apps/web/data/vector-index.demo.*`), which is enough to exercise every part
-of the pipeline: ambiguity, multi-hop, conflict, citations.
+size needs a long-lived host, not a function.
+
+So the hosted deployment reads the *sample slice* instead — the same 135
+curated benchmark documents the eval harness uses, ingested into a HydraDB
+Cloud collection by the same `ingest-full.ts` path the corpus uses, with its
+433-entry index and body-text sidecar committed under `apps/web/data/`
+(2.6 MB total):
+
+```bash
+BENCH_DATA_DIR=$PWD/packages/bench/data/enterprise-rag-bench-sample \
+BENCH_QUESTIONS_FILE=questions.sample.jsonl \
+BENCH_WORK_DIR=$PWD/packages/bench/data/hosted-ingest \
+VECTOR_INDEX_FULL_PATH=$PWD/apps/web/data/vector-index.hosted.json \
+HYDRADB_BYOG_COLLECTION=graf_demo \
+  pnpm run bench:ingest:full   # then bench:embed:full, then seed:demo to merge the demo graph
+```
+
+Small enough to deploy, and still real benchmark data with real cross-source
+structure — which is what lets the example prompts on the demo be the
+benchmark's own questions rather than questions written to flatter the system.
 
 ## License
 

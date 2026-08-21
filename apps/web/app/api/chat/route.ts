@@ -2,7 +2,14 @@ import { answerQuestion, type AnswerResult, type EntityOverride, type ResponseMo
 
 import type { ChatTurnResult, Conflict, EntityResolution, ResponseMode, Trace, TraceEdge, TraceNode } from "@/lib/trace-types"
 
-export const maxDuration = 60
+/**
+ * A question with several entities in it spends 20-40s in LLM calls (see the
+ * stage breakdown in packages/bench/README.md), and the tail runs past a minute
+ * — so the default 60s ceiling was cutting off exactly the multi-constraint
+ * questions the graph is best at. Vercel clamps this to whatever the plan
+ * allows, so it's an upper bound rather than a reservation.
+ */
+export const maxDuration = 300
 
 interface ChatRequestBody {
   question: string

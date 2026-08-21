@@ -13,6 +13,8 @@
       // bug that looks like a data problem, so the list is deliberately
       // everything rather than the build-time subset.
       "env": [
+        "NODE_ENV",
+        "VERCEL",
         "GRAF_GRAPH_TRANSPORT",
         "GRAF_SCHEMA_PATH",
         "GRAF_DB_PATH",

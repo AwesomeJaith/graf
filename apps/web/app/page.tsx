@@ -7,6 +7,7 @@ import { useEvidenceSetting, useReasoningSetting } from "@/lib/use-panel-default
 import { useConversations } from "@/lib/use-conversations"
 import { ChatInput } from "@/components/chat/chat-input"
 import { ConversationSidebar } from "@/components/chat/conversation-sidebar"
+import { ExamplePrompts } from "@/components/chat/example-prompts"
 import { UserTurn, AssistantTurn } from "@/components/chat/message-turn"
 import { PromptRail, promptAnchorId } from "@/components/chat/prompt-rail"
 import { SettingsMenu } from "@/components/chat/settings-menu"
@@ -221,6 +222,7 @@ export default function Page() {
 
         <div className="px-5 pb-5">
           <div className="mx-auto max-w-3xl">
+            {messages.length === 0 && <ExamplePrompts onPick={handleSubmit} />}
             <ChatInput
               mode={mode}
               onModeChange={setMode}
