@@ -1,4 +1,4 @@
-import { chat, extractJson } from "./bedrock-chat"
+import { chatStructured } from "./bedrock-chat"
 
 /**
  * Simplified metrics-based eval, modeled on EnterpriseRAG-Bench's own
@@ -13,6 +13,15 @@ export interface CorrectnessVerdict {
   reasoning: string
 }
 
+const CORRECTNESS_SCHEMA = {
+  type: "object",
+  properties: {
+    correct: { type: "boolean", description: "Whether the candidate answer is correct." },
+    reasoning: { type: "string", description: "One sentence explaining the verdict." },
+  },
+  required: ["correct", "reasoning"],
+}
+
 export async function judgeCorrectness(
   question: string,
   goldAnswer: string,
@@ -22,11 +31,13 @@ export async function judgeCorrectness(
     "You are grading a candidate answer against a gold answer for a question-answering benchmark. " +
     "Be lenient toward stylistic differences, additional context, and extra detail, but the candidate must address " +
     "the core aspects of the question and must not conflict with the gold answer. Specific quantities/dates/values " +
-    "mentioned in the gold answer must match in the candidate if the candidate mentions them at all. " +
-    'Respond with ONLY a JSON object: {"correct": boolean, "reasoning": "one sentence"}'
+    "mentioned in the gold answer must match in the candidate if the candidate mentions them at all."
   const user = `Question: ${question}\n\nGold answer: ${goldAnswer}\n\nCandidate answer: ${candidateAnswer}`
-  const text = await chat(system, user)
-  return extractJson<CorrectnessVerdict>(text)
+  return chatStructured<CorrectnessVerdict>(system, user, {
+    name: "record_verdict",
+    description: "Record whether the candidate answer is correct, with one sentence of reasoning.",
+    inputSchema: CORRECTNESS_SCHEMA,
+  })
 }
 
 export interface FactVerdict {
@@ -34,16 +45,28 @@ export interface FactVerdict {
   supported: boolean
 }
 
+const SUPPORTED_SCHEMA = {
+  type: "object",
+  properties: {
+    supported: {
+      type: "boolean",
+      description: "Whether the candidate answer contains or implies the fact.",
+    },
+  },
+  required: ["supported"],
+}
+
 export async function judgeFactSupported(
   candidateAnswer: string,
   fact: string
 ): Promise<FactVerdict> {
-  const system =
-    "You check whether a candidate answer contains or implies a specific fact. " +
-    'Respond with ONLY a JSON object: {"supported": boolean}'
+  const system = "You check whether a candidate answer contains or implies a specific fact."
   const user = `Fact to check: ${fact}\n\nCandidate answer: ${candidateAnswer}`
-  const text = await chat(system, user)
-  const { supported } = extractJson<{ supported: boolean }>(text)
+  const { supported } = await chatStructured<{ supported: boolean }>(system, user, {
+    name: "record_support",
+    description: "Record whether the candidate answer supports the fact.",
+    inputSchema: SUPPORTED_SCHEMA,
+  })
   return { fact, supported }
 }
 

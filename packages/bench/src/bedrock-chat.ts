@@ -2,6 +2,7 @@ import {
   BedrockRuntimeClient,
   ConverseCommand,
 } from "@aws-sdk/client-bedrock-runtime"
+import type { DocumentType } from "@smithy/types"
 
 let client: BedrockRuntimeClient | undefined
 
@@ -36,34 +37,56 @@ export async function chat(
 }
 
 /**
- * Extracts the first balanced {...} JSON object out of a judge response,
- * tolerating stray prose before/after it. A regex can't do this reliably —
- * both a greedy match (swallows unrelated braces in trailing prose) and a
- * naive non-greedy match (cuts off early on a `}` that appears inside a
- * string field, e.g. inside "reasoning") produce invalid JSON. This walks
- * the string tracking brace depth and string/escape state instead.
+ * A judge verdict, as a forced tool call rather than JSON asked for in prose.
+ *
+ * Asking for `{"correct": ..., "reasoning": ...}` as text and parsing it back
+ * cost two questions of the full-corpus run: the model closed the reasoning
+ * string with a doubled quote (`...fallback.""}`), so any brace-depth parser
+ * reads the final `}` as still inside a string and the object never closes.
+ * That's not a fixable parser bug — hand-written JSON from a model has an
+ * open-ended set of ways to be almost-valid, and each one silently drops a
+ * question from the denominator.
+ *
+ * `toolChoice` makes the model fill a schema the SDK hands back already
+ * parsed, so there's no text to parse and nothing to be malformed. Same
+ * mechanism the retrieval pipeline uses; kept separate from it because the
+ * judges run on BEDROCK_FAST_MODEL_ID, deliberately not the model under test.
  */
-export function extractJson<T>(text: string): T {
-  const start = text.indexOf("{")
-  if (start === -1)
-    throw new Error(`No JSON found in judge response: ${text.slice(0, 200)}`)
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (ch === "\\") escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') inString = true
-    else if (ch === "{") depth++
-    else if (ch === "}") {
-      depth--
-      if (depth === 0) return JSON.parse(text.slice(start, i + 1)) as T
-    }
-  }
-  throw new Error(`Unbalanced JSON in judge response: ${text.slice(0, 200)}`)
+export async function chatStructured<T>(
+  system: string,
+  user: string,
+  tool: { name: string; description: string; inputSchema: Record<string, unknown> },
+  modelId = process.env.BEDROCK_FAST_MODEL_ID
+): Promise<T> {
+  if (!modelId)
+    throw new Error(
+      "BEDROCK_FAST_MODEL_ID (or an explicit modelId) is required."
+    )
+  const response = await getClient().send(
+    new ConverseCommand({
+      modelId,
+      system: [{ text: system }],
+      messages: [{ role: "user", content: [{ text: user }] }],
+      toolConfig: {
+        tools: [
+          {
+            toolSpec: {
+              name: tool.name,
+              description: tool.description,
+              inputSchema: { json: tool.inputSchema as DocumentType },
+            },
+          },
+        ],
+        toolChoice: { tool: { name: tool.name } },
+      },
+      inferenceConfig: { maxTokens: 4096, temperature: 0 },
+    })
+  )
+  const blocks = response.output?.message?.content ?? []
+  const toolUse = blocks.find((b) => b.toolUse)?.toolUse
+  if (!toolUse?.input)
+    throw new Error(
+      `Judge did not return a ${tool.name} tool call (stopReason=${response.stopReason}).`
+    )
+  return toolUse.input as T
 }

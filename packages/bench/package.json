@@ -16,6 +16,7 @@
     "@workspace/vector-index": "workspace:*"
   },
   "devDependencies": {
+    "@smithy/types": "^4.17.2",
     "@types/node": "^20",
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
