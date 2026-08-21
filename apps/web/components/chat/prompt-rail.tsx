@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { Tooltip } from "@base-ui/react/tooltip"
+import { motion } from "motion/react"
 
 import type { ChatMessage } from "@/lib/trace-types"
 import { cn } from "@workspace/ui/lib/utils"
@@ -103,17 +104,25 @@ export function PromptRail({
             // `rounded-full` on a 3px bar is a 1.5px cap on each end — the whole
             // point of giving the ticks height rather than leaving them
             // hairlines, since a 1px rule has nothing for a radius to round.
-            <span
+            // Animated here rather than with a CSS transition because moving the
+            // highlight animates two ticks at once, and motion retargets a
+            // half-finished tick from wherever it currently is instead of
+            // restarting its timing function from the new start value — a fast
+            // scroll crosses several questions, so ticks routinely get
+            // reassigned mid-flight.
+            //
+            // Dimmed rather than recoloured: opacity is a number motion can
+            // interpolate, where the `bg-muted-foreground/60` it replaces is a
+            // `var(--color-*)` string it can't. 0.5 of the foreground is about
+            // where that token landed against this background anyway.
+            <motion.span
               key={message.id}
-              // Faster than the 150ms default, and narrowed to the two
-              // properties that actually change: the highlight moving down the
-              // rail is two ticks animating at once, so at the default duration
-              // the old one is still shrinking while the new one grows and the
-              // step reads as a smear rather than a move.
-              className={cn(
-                "h-[3px] rounded-full transition-[width,background-color] duration-75",
-                message.id === activeMessageId ? "w-7 bg-foreground" : "w-5 bg-muted-foreground/60"
-              )}
+              className="h-[3px] rounded-full bg-foreground"
+              // No entry animation — a tick should appear at its resting size,
+              // and on first paint every one of them would otherwise grow in.
+              initial={false}
+              animate={message.id === activeMessageId ? { width: 28, opacity: 1 } : { width: 20, opacity: 0.5 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
             />
           ))}
         </div>
