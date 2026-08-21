@@ -105,8 +105,13 @@ export function PromptRail({
             // hairlines, since a 1px rule has nothing for a radius to round.
             <span
               key={message.id}
+              // Faster than the 150ms default, and narrowed to the two
+              // properties that actually change: the highlight moving down the
+              // rail is two ticks animating at once, so at the default duration
+              // the old one is still shrinking while the new one grows and the
+              // step reads as a smear rather than a move.
               className={cn(
-                "h-[3px] rounded-full transition-all",
+                "h-[3px] rounded-full transition-[width,background-color] duration-75",
                 message.id === activeMessageId ? "w-7 bg-foreground" : "w-5 bg-muted-foreground/60"
               )}
             />
