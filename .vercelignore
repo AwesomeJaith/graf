@@ -1,0 +1,31 @@
+# What the CLI uploads for a deployment. Present because this is a pnpm
+# workspace: the project's root directory is apps/web, but the *upload* has to
+# be the repo root or `pnpm install` can't resolve `workspace:*` deps — and the
+# repo root also holds several GB of benchmark corpus and index sidecars that
+# have no business in a deployment.
+#
+# Note this replaces .gitignore for upload purposes rather than adding to it, so
+# the ordinary ignores have to be repeated here.
+node_modules
+.git
+.next
+.turbo
+out
+dist
+build
+coverage
+*.tsbuildinfo
+
+# Secrets: the deployment's configuration comes from Vercel's own environment
+# variables, so a local .env has nothing to do here.
+.env
+.env.*
+!.env.example
+
+# Local state and generated data. apps/web/data (the demo embedding index the
+# hosted deployment reads) is deliberately *not* excluded — it's the one data
+# file the serverless function needs.
+.data
+.hydradb
+prompts
+packages/bench/data

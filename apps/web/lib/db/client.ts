@@ -1,11 +1,8 @@
 import Database from "better-sqlite3"
 import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
 
 import { terminalResult } from "../trace-types"
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
  * A serverless deployment has a read-only filesystem apart from `/tmp`, so the
@@ -14,10 +11,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * within a session — but it is per-instance and not durable, so a hosted demo
  * can lose old threads. Persisting them properly means a hosted database, which
  * is a bigger change than the demo needs.
+ *
+ * Anchored to the working directory (always the app directory under `next
+ * dev`/`next build`) rather than to this module's own location, which after
+ * bundling is a chunk path that has nothing to do with the repo layout.
  */
 const DEFAULT_DB_PATH = process.env.VERCEL
   ? "/tmp/graf.db"
-  : join(__dirname, "..", "..", "..", "..", ".data", "graf.db")
+  : join(process.cwd(), "..", "..", ".data", "graf.db")
 const DB_PATH = process.env.GRAF_DB_PATH ?? DEFAULT_DB_PATH
 
 let db: Database.Database | undefined
