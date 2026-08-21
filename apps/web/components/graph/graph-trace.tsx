@@ -4,7 +4,7 @@ import * as React from "react"
 import { motion } from "motion/react"
 import { Dialog } from "@base-ui/react/dialog"
 
-import { FileText, X } from "lucide-react"
+import { FileText, Maximize2, X } from "lucide-react"
 
 import type { Trace, TraceNode } from "@/lib/trace-types"
 import { cn } from "@workspace/ui/lib/utils"
@@ -19,16 +19,23 @@ interface GraphTraceProps {
   highlightedNodeIds?: string[] | null
   highlightedEdgeIds?: string[] | null
   onNodeClick?: (node: TraceNode) => void
+  /**
+   * `expanded` is the copy of itself this renders inside the fullscreen dialog:
+   * it fills the dialog instead of standing in a fixed-height panel, and has no
+   * expand button of its own. Re-entering the same component rather than
+   * extracting a shared canvas keeps one implementation of the layout,
+   * measuring and inspector — the second instance just measures a bigger box.
+   */
+  variant?: "panel" | "expanded"
 }
 
+/** Geometry only. Which edges are emphasised is derived at render time. */
 interface EdgePath {
   id: string
   d: string
   midX: number
   midY: number
   label: string
-  active: boolean
-  showLabel: boolean
 }
 
 /**
@@ -43,7 +50,14 @@ const LABEL_CELL = 34
 // measures the real rendered DOM positions to draw connecting edges. The
 // layout is derived entirely from `trace` — there is no separate mock graph,
 // so whatever the retrieval pipeline actually touched is what renders here.
-export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNodeClick }: GraphTraceProps) {
+export function GraphTrace({
+  trace,
+  highlightedNodeIds,
+  highlightedEdgeIds,
+  onNodeClick,
+  variant = "panel",
+}: GraphTraceProps) {
+  const isExpanded = variant === "expanded"
   const columns = React.useMemo(() => layoutColumns(trace), [trace])
   const containerRef = React.useRef<HTMLDivElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
@@ -52,6 +66,7 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
   const [edgePaths, setEdgePaths] = React.useState<EdgePath[]>([])
   const [inspected, setInspected] = React.useState<TraceNode | null>(null)
   const [viewingNode, setViewingNode] = React.useState<TraceNode | null>(null)
+  const [expanded, setExpanded] = React.useState(false)
 
   // The inspector panel opens below the graph, possibly off-screen — bring it
   // (not the whole chat) into view, and only scroll as far as needed.
@@ -112,24 +127,11 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
         midX: (x1 + x2) / 2,
         midY: (y1 + y2) / 2,
         label: edge.type.replace(/_/g, " ").toLowerCase(),
-        active: !highlightedEdgeIds || highlightedEdgeIds.includes(edge.id),
-        showLabel: false,
       })
     }
 
-    // Thin the labels down to one per grid cell, letting highlighted edges
-    // claim their cell first so a label is never spent on a dimmed edge while
-    // the edge the answer actually cites goes unlabelled.
-    const taken = new Set<string>()
-    for (const path of [...paths].sort((a, b) => Number(b.active) - Number(a.active))) {
-      const cell = `${Math.round(path.midX / LABEL_CELL)}:${Math.round(path.midY / LABEL_CELL)}`
-      if (taken.has(cell)) continue
-      taken.add(cell)
-      path.showLabel = true
-    }
-
     setEdgePaths(paths)
-  }, [trace, highlightedEdgeIds])
+  }, [trace])
 
   React.useLayoutEffect(() => {
     measure()
@@ -145,6 +147,50 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
       window.removeEventListener("resize", measure)
     }
   }, [measure])
+
+  /**
+   * The edges worth colouring in, or null when nothing is selected.
+   *
+   * Before, an unselected graph drew *every* edge in primary, so the one
+   * relationship a claim rested on looked exactly like the fifty around it and
+   * the whole panel read as noise. Emphasis is now something you ask for: a
+   * claim narrows to the edges it cites, and clicking a node narrows to that
+   * node's own edges. With nothing selected, nothing is emphasised.
+   *
+   * Claim highlighting wins over node selection — it came from the answer text,
+   * which is the more specific thing to be asking about.
+   */
+  const activeEdgeIds = React.useMemo(() => {
+    if (highlightedEdgeIds) return new Set(highlightedEdgeIds)
+    if (inspected) {
+      return new Set(
+        trace.edges.filter((e) => e.from === inspected.id || e.to === inspected.id).map((e) => e.id)
+      )
+    }
+    return null
+  }, [highlightedEdgeIds, inspected, trace.edges])
+
+  // Derived rather than baked into `measure`, so selecting a node recolours the
+  // graph without re-measuring the DOM or re-running the draw animation.
+  const edges = React.useMemo(() => {
+    const decorated = edgePaths.map((p) => ({
+      ...p,
+      active: activeEdgeIds ? activeEdgeIds.has(p.id) : false,
+      showLabel: false,
+    }))
+    // Once there's a selection, only the emphasised edges are labelled: the
+    // point of selecting is to be told about *those* relationships, and a
+    // greyed-out pill on an edge you didn't ask about is the noise itself.
+    const candidates = activeEdgeIds ? decorated.filter((p) => p.active) : decorated
+    const taken = new Set<string>()
+    for (const path of candidates) {
+      const cell = `${Math.round(path.midX / LABEL_CELL)}:${Math.round(path.midY / LABEL_CELL)}`
+      if (taken.has(cell)) continue
+      taken.add(cell)
+      path.showLabel = true
+    }
+    return decorated
+  }, [edgePaths, activeEdgeIds])
 
   const dimmed = (id: string) => !!highlightedNodeIds && !highlightedNodeIds.includes(id)
 
@@ -184,11 +230,33 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
   }, [panning])
 
   return (
-    <div className="rounded-lg border border-border/70 bg-card/40">
+    <div
+      className={cn(
+        "relative rounded-lg border border-border/70 bg-card/40",
+        // In the dialog the chrome is the dialog's own, and the graph takes the
+        // height it's given rather than setting it.
+        isExpanded && "flex min-h-0 flex-1 flex-col border-0 bg-transparent"
+      )}
+    >
+      {!isExpanded && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          aria-label="Expand graph"
+          title="Expand graph"
+          className="absolute top-2 right-2 z-20 rounded-md border border-border/70 bg-background/70 p-1.5 text-muted-foreground backdrop-blur-sm transition-colors hover:text-foreground"
+        >
+          <Maximize2 className="size-3.5" />
+        </button>
+      )}
       <div
         ref={containerRef}
         onPointerDown={onBackgroundPointerDown}
-        className={cn("relative max-h-[30rem] overflow-auto p-6", panning ? "cursor-grabbing" : "cursor-grab")}
+        className={cn(
+          "relative overflow-auto p-6",
+          isExpanded ? "min-h-0 flex-1" : "max-h-[30rem]",
+          panning ? "cursor-grabbing" : "cursor-grab"
+        )}
       >
         {/* The edge layer lives inside the content wrapper rather than the
             scroll container. An `inset-0 h-full w-full` SVG resolves against
@@ -199,21 +267,24 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
             floating with no lines attached to them. */}
         <div ref={contentRef} className="relative flex items-start gap-32">
           <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" aria-hidden>
-            {edgePaths.map((p) => (
+            {edges.map((p) => (
               <motion.path
                 key={p.id}
                 d={p.d}
                 fill="none"
-                stroke={p.active ? "var(--color-primary)" : "var(--color-border)"}
-                strokeWidth={p.active ? 1.5 : 1}
-                strokeOpacity={p.active ? 0.7 : 0.5}
+                // Unemphasised edges are grey rather than `--color-border`:
+                // border is 8% white, which at any stroke opacity read as a
+                // missing line rather than a quiet one.
+                stroke={p.active ? "var(--color-primary)" : "var(--color-muted-foreground)"}
+                strokeWidth={p.active ? 1.6 : 1}
+                strokeOpacity={p.active ? 0.8 : 0.3}
                 initial={{ pathLength: 0, opacity: 0 }}
                 animate={{ pathLength: 1, opacity: 1 }}
                 transition={{ duration: 0.5, ease: "easeOut" }}
               />
             ))}
           </svg>
-          {edgePaths
+          {edges
             .filter((p) => p.showLabel)
             .map((p) => (
               <div
@@ -251,7 +322,11 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
                       "hover:border-primary/40",
                       node.role === "resolved" ? "border-primary/50" : "border-border",
                       node.role === "conflict" && "border-dashed border-primary/60",
-                      !isDim && highlightedNodeIds?.includes(node.id) && "ring-2 ring-primary/50"
+                      !isDim && highlightedNodeIds?.includes(node.id) && "ring-2 ring-primary/50",
+                      // The card whose edges are lit up, marked as such —
+                      // otherwise the only sign of which node you picked is the
+                      // inspector below, which can be scrolled out of view.
+                      inspected?.id === node.id && "border-primary ring-2 ring-primary/60"
                     )}
                   >
                     <div className="flex items-center gap-1.5 text-muted-foreground">
@@ -270,7 +345,15 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
         </div>
       </div>
       {inspected && (
-        <div ref={inspectorRef} className="border-t border-border/70 px-4 py-3 text-xs">
+        <div
+          ref={inspectorRef}
+          className={cn(
+            "border-t border-border/70 px-4 py-3 text-xs",
+            // In the dialog the inspector shares a fixed height with the
+            // canvas, so cap it and let it scroll instead of squeezing the graph.
+            isExpanded && "max-h-[45%] shrink-0 overflow-y-auto"
+          )}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <NodeIcon kind={inspected.kind} className="size-3.5 text-muted-foreground" />
@@ -373,6 +456,41 @@ export function GraphTrace({ trace, highlightedNodeIds, highlightedEdgeIds, onNo
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {/* The same graph with room to breathe. Traces routinely spread wider than
+          the 3xl chat column, and panning a 30rem window across them is how you
+          lose track of where you are; here the whole thing is usually on screen
+          at once. Rendered only in the panel variant, which is also what stops
+          the recursion. Selection deliberately starts clean rather than being
+          handed over: the reason to expand is to look around. */}
+      {!isExpanded && (
+        <Dialog.Root open={expanded} onOpenChange={setExpanded}>
+          <Dialog.Portal>
+            <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+            <Dialog.Popup className="fixed top-1/2 left-1/2 z-50 flex h-[88vh] w-[94vw] max-w-[100rem] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-card shadow-xl outline-none">
+              <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
+                <Dialog.Title className="text-sm font-semibold">Knowledge trace</Dialog.Title>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span>
+                    {trace.nodes.length} {trace.nodes.length === 1 ? "node" : "nodes"} · {trace.edges.length}{" "}
+                    {trace.edges.length === 1 ? "edge" : "edges"}
+                  </span>
+                  <Dialog.Close className="text-muted-foreground hover:text-foreground">
+                    <X className="size-4" />
+                  </Dialog.Close>
+                </div>
+              </div>
+              <GraphTrace
+                trace={trace}
+                highlightedNodeIds={highlightedNodeIds}
+                highlightedEdgeIds={highlightedEdgeIds}
+                onNodeClick={onNodeClick}
+                variant="expanded"
+              />
+            </Dialog.Popup>
+          </Dialog.Portal>
+        </Dialog.Root>
+      )}
     </div>
   )
 }

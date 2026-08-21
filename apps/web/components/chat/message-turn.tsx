@@ -29,10 +29,12 @@ export function AssistantTurn({
   message,
   onSelectEntity,
   showReasoningByDefault = true,
+  showEvidenceByDefault = false,
 }: {
   message: ChatMessage
   onSelectEntity?: (mention: string, candidateId: string, label: string) => void
   showReasoningByDefault?: boolean
+  showEvidenceByDefault?: boolean
 }) {
   const [activeClaim, setActiveClaim] = React.useState<AnswerClaim | null>(null)
   const result = message.result
@@ -69,6 +71,7 @@ export function AssistantTurn({
               highlightedNodeIds={activeClaim?.supportingNodeIds ?? null}
               highlightedEdgeIds={activeClaim?.supportingEdgeIds ?? null}
               forceExpand={!!activeClaim}
+              defaultExpanded={showEvidenceByDefault}
             />
           </>
         )}

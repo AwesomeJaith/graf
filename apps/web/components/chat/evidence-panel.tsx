@@ -20,6 +20,8 @@ interface EvidencePanelProps {
   onNodeClick?: (node: TraceNode) => void
   /** Expands the panel when a claim is clicked elsewhere, so the highlighted path is visible. */
   forceExpand?: boolean
+  /** The persisted "show evidence by default" setting. */
+  defaultExpanded?: boolean
 }
 
 // Bundles everything that backs the answer — entity-resolution confidence,
@@ -35,12 +37,21 @@ export function EvidencePanel({
   highlightedEdgeIds,
   onNodeClick,
   forceExpand,
+  defaultExpanded = false,
 }: EvidencePanelProps) {
-  const [expanded, setExpanded] = React.useState(false)
+  const [expanded, setExpanded] = React.useState(defaultExpanded)
 
   React.useEffect(() => {
     if (forceExpand) setExpanded(true)
   }, [forceExpand])
+
+  // Re-sync on change, not just on mount: the setting is read from
+  // localStorage in an effect, so its real value can arrive after a panel has
+  // already rendered with the fallback. It also means flipping the switch
+  // applies to answers already on screen rather than only to the next one.
+  React.useEffect(() => {
+    setExpanded(defaultExpanded)
+  }, [defaultExpanded])
 
   const hasContent = entityResolutions.length > 0 || conflicts.length > 0 || trace.nodes.length > 0
   if (!hasContent) return null

@@ -9,6 +9,12 @@ import { Markdown } from "./markdown"
 export function ReasoningPanel({ reasoning, defaultExpanded }: { reasoning: string; defaultExpanded: boolean }) {
   const [expanded, setExpanded] = React.useState(defaultExpanded)
 
+  // Same reason as in <EvidencePanel>: the setting hydrates from localStorage
+  // after mount, so sampling it once at mount can miss the stored value.
+  React.useEffect(() => {
+    setExpanded(defaultExpanded)
+  }, [defaultExpanded])
+
   if (!reasoning) return null
 
   return (
