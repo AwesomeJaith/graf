@@ -434,8 +434,15 @@ export function GraphTrace({
       )}
       <Dialog.Root open={!!viewingNode} onOpenChange={(open) => !open && setViewingNode(null)}>
         <Dialog.Portal>
-          <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-          <Dialog.Popup className="fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-card shadow-xl outline-none">
+          {/* `forceRender` because opening a document from the *expanded* trace
+              makes this a nested dialog, and Base UI drops a nested dialog's
+              backdrop by default — so the one case where the background most
+              needs pushing back (a wall of node cards directly behind the
+              document) was the one case with nothing over it. Sits above the
+              parent dialog's own z-50 layer rather than relying on portal order
+              to break the tie. */}
+          <Dialog.Backdrop forceRender className="fixed inset-0 z-60 bg-black/60 backdrop-blur-sm" />
+          <Dialog.Popup className="fixed top-1/2 left-1/2 z-60 flex max-h-[85vh] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-card shadow-xl outline-none">
             <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
               <div className="flex items-center gap-2">
                 <NodeIcon kind={viewingNode?.kind ?? ""} className="size-4 text-muted-foreground" />
