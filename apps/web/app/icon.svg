@@ -1,0 +1,51 @@
+<!--
+  The Graf mark, as a favicon.
+
+  Not a separate drawing: this is the identicon from
+  packages/ui/src/components/avatar.tsx with the generator run for the name
+  "Graf" and its output baked in, so the tab icon is the same mark the app
+  renders next to every assistant message. hash("Graf") = 2227824 resolves to
+  palette entries 0/1/2 (#F6C750 ground, #E63525 blob, #050D4C overlay blob),
+  each blob translated (0,0), rotated 72° about the canvas centre and scaled
+  1.2 — see generateColors() there for the arithmetic. Re-run it if the palette
+  or the paths ever change.
+
+  Two deliberate differences from the component. The rounded square is a
+  clipPath here rather than the `rounded-[28%]` + overflow-hidden on <Avatar>'s
+  root, since a favicon has no wrapper to be clipped by; 25.2 is 28% of the 90
+  unit canvas. And the group is isolated, so the overlay-blended layer blends
+  against the two layers below it instead of against whatever the rasteriser
+  treats as the backdrop of a standalone document.
+-->
+<!-- No width/height: the viewBox alone leaves it resolution-free, so anything
+     asking for a 16, 32 or 180px icon scales the artwork instead of matting a
+     90px drawing into a bigger canvas. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 90" fill="none">
+  <title>Graf</title>
+  <defs>
+    <clipPath id="squircle">
+      <rect width="90" height="90" rx="25.2" ry="25.2" />
+    </clipPath>
+    <filter id="blur" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix" />
+      <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+      <feGaussianBlur stdDeviation="7" result="effect1_foregroundBlur" />
+    </filter>
+  </defs>
+  <g clip-path="url(#squircle)" style="isolation: isolate">
+    <rect width="90" height="90" fill="#F6C750" />
+    <path
+      filter="url(#blur)"
+      d="M32.414 59.35L50.376 70.5H72.5v-71H33.728L26.5 13.381l19.057 27.08L32.414 59.35z"
+      fill="#E63525"
+      transform="translate(0 0) rotate(-288 45 45) scale(1.2)"
+    />
+    <path
+      filter="url(#blur)"
+      style="mix-blend-mode: overlay"
+      d="M22.216 24L0 46.75l14.108 38.129L78 86l-3.081-59.276-22.378 4.005 12.972 20.186-23.35 27.395L22.215 24z"
+      fill="#050D4C"
+      transform="translate(0 0) rotate(72 45 45) scale(1.2)"
+    />
+  </g>
+</svg>

@@ -105,7 +105,10 @@ export default function Page() {
             is its own, and the wrapper's has to stay visible to hold the fade. */}
         <div className="relative min-h-0 flex-1">
           <div ref={scrollRef} className="h-full overflow-y-auto px-5">
-            <div className="mx-auto flex max-w-3xl flex-col gap-6 py-4">
+            {/* `pt-14` clears the h-12 fade below, so the first message can be
+                scrolled fully clear of it rather than sitting under the blur at
+                the top of the scroll range. */}
+            <div className="mx-auto flex max-w-3xl flex-col gap-6 pt-14 pb-4">
               {messages.length === 0 && (
                 <div className="flex flex-1 items-center justify-center pt-24 text-sm text-muted-foreground">
                   Ask about your organization&apos;s people, projects, and decisions.
